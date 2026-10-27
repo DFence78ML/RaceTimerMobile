@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>AI Finish Line Mobile</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="style.css">
+
+  <!-- TensorFlow.js and MoveNet Pose Detection -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@4.17.0/dist/tf-core.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter@4.17.0/dist/tf-converter.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl@4.17.0/dist/tf-backend-webgl.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.3/dist/pose-detection.min.js"></script>
+</head>
+<body>
+  <div id="app-container">
+    <video id="webcam" playsinline muted autoplay></video>
+    <canvas id="overlay-canvas"></canvas>
+
+    <!-- Top Status Bar -->
+    <div id="hud-top">
+      <div id="race-clock">00:00.000</div>
+      <div id="status-badges">
+        <span id="badge-state" class="badge stopped">STOPPED</span>
+        <span id="badge-fps" class="badge">FPS: 00</span>
+        <span id="badge-dir" class="badge">DIR: L &rarr; R</span>
+      </div>
+    </div>
+
+    <!-- Live Finishers Feed Drawer -->
+    <div id="results-drawer">
+      <div class="drawer-header">Recent Finishers (<span id="finisher-count">0</span>)</div>
+      <div id="results-list"></div>
+    </div>
+
+    <!-- Bottom Controls -->
+    <div id="hud-bottom">
+      <button id="btn-start" class="btn btn-green">START</button>
+      <button id="btn-stop" class="btn btn-red" disabled>STOP</button>
+      <button id="btn-dir" class="btn">DIR</button>
+      <button id="btn-reset-line" class="btn">RESET LINE</button>
+      <button id="btn-export-parkrun" class="btn btn-blue">EXPORT CSV</button>
+      <button id="btn-toggle-cam" class="btn">FLIP CAM</button>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
