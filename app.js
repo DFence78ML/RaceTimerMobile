@@ -1,6 +1,5 @@
 /**
- * AI Finish Line Mobile - Complete Production Application
- * High precision multi-person pose timing, tracking, and persistence
+ * AI Finish Line Mobile - Complete Timing, Multi-Pose Tracking & Email Export
  */
 
 // ==========================================
@@ -95,18 +94,10 @@ class RaceDatabase {
 // 2. Geometry & Sub-Frame Timing Mathematics
 // ==========================================
 class TimingGeometry {
-  /**
-   * Computes 2D signed distance from point P(px, py) to line segment A(x1, y1) -> B(x2, y2).
-   * Sign indicates the side of the directed line.
-   */
   static signedDistanceToLine(px, py, x1, y1, x2, y2) {
     return (x2 - x1) * (py - y1) - (y2 - y1) * (px - x1);
   }
 
-  /**
-   * Checks whether a path from P_prev to P_curr crosses line segment AB in the designated direction.
-   * direction: 'ltr' (Left-to-Right) or 'rtl' (Right-to-Left)
-   */
   static evaluateCrossing(prevX, prevY, currX, currY, lineA, lineB, direction) {
     const s1 = this.signedDistanceToLine(prevX, prevY, lineA.x, lineA.y, lineB.x, lineB.y);
     const s2 = this.signedDistanceToLine(currX, currY, lineA.x, lineA.y, lineB.x, lineB.y);
@@ -120,14 +111,11 @@ class TimingGeometry {
 
     if (!crossed) return null;
 
-    // Linear sub-frame interpolation factor alpha in [0, 1]
     const denom = Math.abs(s1) + Math.abs(s2);
     const alpha = denom === 0 ? 0.5 : Math.abs(s1) / denom;
-
     const crossX = prevX + alpha * (currX - prevX);
     const crossY = prevY + alpha * (currY - prevY);
 
-    // Bounding box segment check to ensure crossing occurred along the visible line segment
     const minLineX = Math.min(lineA.x, lineB.x) - 0.05;
     const maxLineX = Math.max(lineA.x, lineB.x) + 0.05;
     const minLineY = Math.min(lineA.y, lineB.y) - 0.05;
@@ -136,7 +124,6 @@ class TimingGeometry {
     if (crossX < minLineX || crossX > maxLineX || crossY < minLineY || crossY > maxLineY) {
       return null;
     }
-
     return { alpha, crossX, crossY };
   }
 }
@@ -147,10 +134,9 @@ class TimingGeometry {
 class RunnerTrack {
   constructor(id, pose, timestamp) {
     this.id = id;
-    this.history = []; // { x, y, timestamp, keypointName, confidence }
-    this.status = 'active'; // 'active', 'crossed', 'cooldown'
+    this.history = [];
+    this.status = 'active';
     this.framesUnseen = 0;
-    this.crossedTime = null;
     this.lastCrossingAttempt = 0;
     this.update(pose, timestamp);
   }
@@ -170,28 +156,22 @@ class RunnerTrack {
   }
 
   extractBestAnchor(keypoints) {
-    // Keypoint indices: 15=left_ankle, 16=right_ankle, 13=left_knee, 14=right_knee,
-    // 11=left_hip, 12=right_hip, 5=left_shoulder, 6=right_shoulder
     const la = keypoints[15], ra = keypoints[16];
     const lk = keypoints[13], rk = keypoints[14];
     const lh = keypoints[11], rh = keypoints[12];
     const ls = keypoints[5],  rs = keypoints[6];
 
-    // 1. Try Ankles
     if (la && ra && (la.score > 0.3 || ra.score > 0.3)) {
       const best = la.score > ra.score ? la : ra;
       return { x: best.x, y: best.y, score: best.score, name: 'ankle' };
     }
-    // 2. Fallback to Knees
     if (lk && rk && (lk.score > 0.25 || rk.score > 0.25)) {
       const best = lk.score > rk.score ? lk : rk;
       return { x: best.x, y: best.y, score: best.score, name: 'knee_fallback' };
     }
-    // 3. Fallback to Hips
     if (lh && rh && (lh.score > 0.2 || rh.score > 0.2)) {
       return { x: (lh.x + rh.x) / 2, y: (lh.y + rh.y) / 2, score: (lh.score + rh.score) / 2, name: 'hip_fallback' };
     }
-    // 4. Fallback to Torso Midpoint
     if (ls && rs && lh && rh) {
       return {
         x: (ls.x + rs.x + lh.x + rh.x) / 4,
@@ -224,14 +204,11 @@ class MultiPersonTracker {
   constructor() {
     this.tracks = [];
     this.nextTrackId = 1;
-    this.maxFramesUnseen = 15; // Track expiration
+    this.maxFramesUnseen = 15;
   }
 
   update(detectedPoses, timestamp) {
     const assignedPoses = new Set();
-    const assignedTracks = new Set();
-
-    // Re-association based on Euclidean distance to predicted positions
     for (const track of this.tracks) {
       const pred = track.predictPosition();
       let bestDist = Infinity;
@@ -241,7 +218,6 @@ class MultiPersonTracker {
         if (assignedPoses.has(idx)) return;
         const anchor = track.extractBestAnchor(pose.keypoints);
         const dist = Math.hypot(pred.x - anchor.x, pred.y - anchor.y);
-        // Distance threshold in normalized coordinate space (0.20 = 20% frame width/height)
         if (dist < 0.20 && dist < bestDist) {
           bestDist = dist;
           bestIdx = idx;
@@ -251,21 +227,17 @@ class MultiPersonTracker {
       if (bestIdx !== -1) {
         track.update(detectedPoses[bestIdx], timestamp);
         assignedPoses.add(bestIdx);
-        assignedTracks.add(track.id);
       } else {
         track.framesUnseen++;
       }
     }
 
-    // Spawn new tracks for unassigned poses
     detectedPoses.forEach((pose, idx) => {
       if (!assignedPoses.has(idx)) {
-        const newTrack = new RunnerTrack(this.nextTrackId++, pose, timestamp);
-        this.tracks.push(newTrack);
+        this.tracks.push(new RunnerTrack(this.nextTrackId++, pose, timestamp));
       }
     });
 
-    // Prune stale or expired tracks
     this.tracks = this.tracks.filter(t => t.framesUnseen <= this.maxFramesUnseen);
     return this.tracks;
   }
@@ -280,29 +252,18 @@ class AppController {
     this.tracker = new MultiPersonTracker();
     this.detector = null;
 
-    // Line endpoints stored in normalized coordinates [0.0 - 1.0]
-    this.line = {
-      p1: { x: 0.5, y: 0.05 },
-      p2: { x: 0.5, y: 0.95 }
-    };
-    this.direction = 'ltr'; // 'ltr' (Left-to-Right) or 'rtl' (Right-to-Left)
+    this.line = { p1: { x: 0.5, y: 0.05 }, p2: { x: 0.5, y: 0.95 } };
+    this.direction = 'ltr';
 
-    this.raceState = 'STOPPED'; // 'STOPPED', 'RUNNING'
+    this.raceState = 'STOPPED';
     this.raceStartTime = 0;
     this.currentSessionId = null;
     this.finishers = [];
 
-    // Hardware and Inference Performance Monitoring
     this.perf = {
-      camFrames: 0,
-      renderFrames: 0,
-      infFrames: 0,
-      lastSec: performance.now(),
-      camFps: 0,
-      renderFps: 0,
-      infFps: 0,
-      isInferring: false,
-      lastFrameTime: performance.now()
+      camFrames: 0, renderFrames: 0, infFrames: 0,
+      lastSec: performance.now(), camFps: 0, renderFps: 0, infFps: 0,
+      isInferring: false, lastFrameTime: performance.now()
     };
 
     this.wakeLock = null;
@@ -310,16 +271,15 @@ class AppController {
     this.videoElem = document.getElementById('webcam');
     this.canvasElem = document.getElementById('overlay');
     this.ctx = this.canvasElem.getContext('2d', { willReadFrequently: true });
-
-    // Touch & Pointer Interaction State
     this.activePointerHandle = null;
-    this.touchThreshold = 38; // Screen px radius for draggable handles
+    this.touchThreshold = 38;
 
     this.init();
   }
 
   async init() {
     this.setupUIListeners();
+    this.setupEmailExportListeners();
     this.setupVisibilityListener();
     await this.db.init();
     await this.restorePreviousSession();
@@ -328,7 +288,6 @@ class AppController {
     this.startRenderingLoop();
   }
 
-  // --- Camera & Model Lifecycle ---
   async initCamera() {
     try {
       if (this.videoElem.srcObject) {
@@ -349,7 +308,6 @@ class AppController {
       await this.videoElem.play();
       this.syncCanvasDimensions();
 
-      // Hook hardware capture timestamps if supported
       if ('requestVideoFrameCallback' in this.videoElem) {
         const onFrame = (now, metadata) => {
           this.perf.camFrames++;
@@ -361,7 +319,7 @@ class AppController {
         this.videoElem.requestVideoFrameCallback(onFrame);
       }
     } catch (err) {
-      this.showAlert('Camera Error', `Could not initialize camera: ${err.message}. Please verify camera permissions.`);
+      this.showAlert('Camera Error', `Could not initialize camera: ${err.message}. Please check permissions.`);
     }
   }
 
@@ -383,9 +341,8 @@ class AppController {
       document.getElementById('model-pill').textContent = 'MoveNet MultiPose Ready';
       document.getElementById('model-pill').classList.add('active');
     } catch (err) {
-      document.getElementById('model-pill').textContent = 'Model Failed';
+      document.getElementById('model-pill').textContent = 'Model Offline';
       document.getElementById('model-pill').classList.add('warning');
-      this.showAlert('AI Load Failure', 'Failed to load TensorFlow.js model weights. Offline cache might be missing.');
     }
   }
 
@@ -397,15 +354,8 @@ class AppController {
 
   setupVisibilityListener() {
     document.addEventListener('visibilitychange', async () => {
-      if (document.visibilityState === 'visible') {
-        if (this.raceState === 'RUNNING') {
-          await this.acquireWakeLock();
-          // Warn if race resumed after backgrounding
-          const elapsedGap = performance.now() - this.perf.lastFrameTime;
-          if (elapsedGap > 1000) {
-            console.warn(`Timing gap of ${Math.round(elapsedGap)}ms detected while app was suspended`);
-          }
-        }
+      if (document.visibilityState === 'visible' && this.raceState === 'RUNNING') {
+        await this.acquireWakeLock();
       }
     });
   }
@@ -425,14 +375,12 @@ class AppController {
     }
   }
 
-  // --- Main Loops (Render & Inference) ---
   startRenderingLoop() {
     const loop = (now) => {
       this.perf.renderFrames++;
       this.updateFPS(now);
       this.syncCanvasDimensions();
 
-      // Trigger asynchronous pose inference without blocking render loop
       if (this.detector && !this.perf.isInferring && this.videoElem.readyState >= 2) {
         this.runInference(now);
       }
@@ -450,7 +398,6 @@ class AppController {
       const poses = await this.detector.estimatePoses(this.videoElem, { maxPoses: 6 });
       this.perf.infFrames++;
 
-      // Normalize keypoints from video pixels to [0, 1] range
       const vw = this.videoElem.videoWidth || 1;
       const vh = this.videoElem.videoHeight || 1;
       const normalizedPoses = poses.map(p => ({
@@ -492,12 +439,10 @@ class AppController {
       );
 
       if (crossing) {
-        // Prevent duplicate trigger for same runner (cooldown: 5 seconds)
         if (currentTimestamp - track.lastCrossingAttempt < 5000) continue;
         track.lastCrossingAttempt = currentTimestamp;
         track.status = 'crossed';
 
-        // Calculate sub-frame interpolated hardware finish time
         const dt = pCurr.timestamp - pPrev.timestamp;
         const exactCrossingTimestamp = pPrev.timestamp + (crossing.alpha * dt);
         const elapsedRaceMs = Math.max(0, exactCrossingTimestamp - this.raceStartTime);
@@ -518,8 +463,6 @@ class AppController {
   async recordFinisher(data) {
     const position = this.finishers.length + 1;
     const formatted = this.formatTime(data.elapsedMs);
-
-    // Capture visual snapshot evidence
     const snapshotUrl = this.captureCrossingSnapshot(data.crossPos);
 
     const flags = [];
@@ -554,11 +497,9 @@ class AppController {
       snapCanvas.width = 320;
       snapCanvas.height = 320;
       const sCtx = snapCanvas.getContext('2d');
-
       const vw = this.videoElem.videoWidth || 640;
       const vh = this.videoElem.videoHeight || 480;
 
-      // Crop around crossing coordinate
       const cropW = vw * 0.4;
       const cropH = vh * 0.4;
       const cropX = Math.max(0, Math.min(vw - cropW, (crossPos.x * vw) - (cropW / 2)));
@@ -571,13 +512,11 @@ class AppController {
     }
   }
 
-  // --- Rendering UI & Finish Line ---
   renderOverlay() {
     const w = this.canvasElem.width;
     const h = this.canvasElem.height;
     this.ctx.clearRect(0, 0, w, h);
 
-    // 1. Draw Active Tracks & Skeletons
     for (const track of this.tracker.tracks) {
       const pos = track.currentPosition();
       const sx = pos.x * w;
@@ -593,7 +532,6 @@ class AppController {
       this.ctx.fillText(`ID:${track.id}`, sx + 10, sy - 10);
     }
 
-    // 2. Draw Finish Line
     const p1x = this.line.p1.x * w;
     const p1y = this.line.p1.y * h;
     const p2x = this.line.p2.x * w;
@@ -608,12 +546,11 @@ class AppController {
     this.ctx.stroke();
     this.ctx.setLineDash([]);
 
-    // 3. Draw Touch Handles
-    this.drawHandle(p1x, p1y, 'START');
-    this.drawHandle(p2x, p2y, 'END');
+    this.drawHandle(p1x, p1y);
+    this.drawHandle(p2x, p2y);
   }
 
-  drawHandle(x, y, label) {
+  drawHandle(x, y) {
     this.ctx.beginPath();
     this.ctx.arc(x, y, 16, 0, 2 * Math.PI);
     this.ctx.fillStyle = 'rgba(46, 160, 67, 0.4)';
@@ -624,10 +561,8 @@ class AppController {
     this.ctx.fill();
   }
 
-  // --- Touch & Pointer Interactions for Line Placement ---
   setupUIListeners() {
     const overlay = this.canvasElem;
-
     const getEventPos = (e) => {
       const rect = overlay.getBoundingClientRect();
       const clientX = e.clientX || (e.touches && e.touches[0].clientX);
@@ -679,7 +614,6 @@ class AppController {
     overlay.addEventListener('pointerup', endPointer);
     overlay.addEventListener('pointercancel', endPointer);
 
-    // Button Controls
     document.getElementById('btn-start').onclick = () => this.startRace();
     document.getElementById('btn-stop').onclick = () => this.stopRace();
     document.getElementById('btn-dir').onclick = () => this.toggleDirection();
@@ -689,13 +623,6 @@ class AppController {
     document.getElementById('btn-new-race').onclick = () => this.startNewSessionWithPrompt();
     document.getElementById('btn-clear-results').onclick = () => this.clearAllResultsPrompt();
 
-    // Export Modal Actions
-    document.getElementById('btn-export-parkrun').onclick = () => this.exportCSV('parkrun_std');
-    document.getElementById('btn-export-parkrun-barcode').onclick = () => this.exportCSV('parkrun_barcode');
-    document.getElementById('btn-export-audit').onclick = () => this.exportCSV('audit');
-    document.getElementById('btn-export-cancel').onclick = () => this.hideExportModal();
-
-    // Review Modal Close
     document.getElementById('btn-modal-close').onclick = () => {
       document.getElementById('review-modal').classList.add('hidden');
     };
@@ -704,11 +631,159 @@ class AppController {
     };
   }
 
-  resetLineCoordinates() {
-    this.line = {
-      p1: { x: 0.5, y: 0.05 },
-      p2: { x: 0.5, y: 0.95 }
+  // ==========================================
+  // 5. Configurable Email & CSV Export Engine
+  // ==========================================
+  setupEmailExportListeners() {
+    const emailInput = document.getElementById('export-email');
+    const savedEmail = localStorage.getItem('race_timer_export_email');
+    if (savedEmail) {
+      emailInput.value = savedEmail;
+    }
+    emailInput.addEventListener('change', () => {
+      localStorage.setItem('race_timer_export_email', emailInput.value.trim());
+    });
+
+    document.getElementById('btn-export-cancel').onclick = () => {
+      document.getElementById('export-modal').classList.add('hidden');
     };
+
+    // Option 1: Mobile Share Sheet (Attaches .csv file directly to Mail app)
+    document.getElementById('btn-email-share').onclick = async () => {
+      await this.handleShareViaEmail();
+    };
+
+    // Option 2: Pre-populated mailto: link (Directly opens default Mail client with CSV body)
+    document.getElementById('btn-email-mailto').onclick = () => {
+      this.handleMailtoExport();
+    };
+
+    // Option 3: Direct Download
+    document.getElementById('btn-download-csv').onclick = () => {
+      this.handleDownloadExport();
+    };
+
+    // Option 4: Copy to Clipboard
+    document.getElementById('btn-copy-csv').onclick = () => {
+      this.handleCopyExport();
+    };
+  }
+
+  showExportModal() {
+    if (this.finishers.length === 0) {
+      this.showAlert('Export CSV', 'No finishers have crossed the line yet.');
+      return;
+    }
+    document.getElementById('export-modal').classList.remove('hidden');
+  }
+
+  generateCSVContent(format) {
+    let content = '';
+    if (format === 'parkrun_std') {
+      content = 'Position,Time\n';
+      this.finishers.forEach(f => {
+        content += `${f.position},${this.formatParkrunTime(f.elapsedMs)}\n`;
+      });
+    } else if (format === 'parkrun_barcode') {
+      content = 'Position,Time,Barcode\n';
+      this.finishers.forEach(f => {
+        content += `${f.position},${this.formatParkrunTime(f.elapsedMs)},\n`;
+      });
+    } else {
+      content = 'Position,Time,Elapsed_Ms,Keypoint,Confidence,Alpha,Flags,Recorded_At\n';
+      this.finishers.forEach(f => {
+        content += `${f.position},${f.formattedTime},${f.elapsedMs},${f.keypointUsed},${f.confidence},${f.subframeAlpha},"${f.flags.join(';')}",${f.recordedAt}\n`;
+      });
+    }
+    return content;
+  }
+
+  async handleShareViaEmail() {
+    const email = document.getElementById('export-email').value.trim();
+    if (email) localStorage.setItem('race_timer_export_email', email);
+
+    const format = document.getElementById('export-format').value;
+    const csvContent = this.generateCSVContent(format);
+    const dateStr = new Date().toISOString().split('T')[0];
+    const filename = `race_results_${dateStr}_${format}.csv`;
+    const file = new File([csvContent], filename, { type: 'text/csv' });
+
+    if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({
+          title: `Race Results (${dateStr})`,
+          text: email ? `Results intended for: ${email}\nTotal Finishers: ${this.finishers.length}` : `Race Results: ${this.finishers.length} finishers.`,
+          files: [file]
+        });
+        document.getElementById('export-modal').classList.add('hidden');
+        return;
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          console.warn('Share API error:', err);
+        }
+      }
+    }
+    // Fallback to mailto if share sheet file sharing is unavailable
+    this.handleMailtoExport();
+  }
+
+  handleMailtoExport() {
+    const email = document.getElementById('export-email').value.trim();
+    if (email) localStorage.setItem('race_timer_export_email', email);
+
+    const format = document.getElementById('export-format').value;
+    const csvContent = this.generateCSVContent(format);
+    const dateStr = new Date().toISOString().split('T')[0];
+
+    const subject = encodeURIComponent(`Race Results - ${dateStr} (${this.finishers.length} Finishers)`);
+    // RFC 6068 safe length check for mailto URI bodies
+    let bodyText = `Attached are the race results for ${dateStr}.\n\nTotal Finishers: ${this.finishers.length}\n\n`;
+    if (csvContent.length < 1800) {
+      bodyText += csvContent;
+    } else {
+      bodyText += csvContent.substring(0, 1500) + '\n\n[...Truncated due to mailto link size limits. Use Download CSV or Share File for the complete file...]';
+    }
+
+    const mailtoUrl = `mailto:${encodeURIComponent(email)}?subject=${subject}&body=${encodeURIComponent(bodyText)}`;
+    window.location.href = mailtoUrl;
+    document.getElementById('export-modal').classList.add('hidden');
+  }
+
+  handleDownloadExport() {
+    const format = document.getElementById('export-format').value;
+    const csvContent = this.generateCSVContent(format);
+    const dateStr = new Date().toISOString().split('T')[0];
+    const filename = `race_results_${dateStr}_${format}.csv`;
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 60000);
+    document.getElementById('export-modal').classList.add('hidden');
+  }
+
+  async handleCopyExport() {
+    const format = document.getElementById('export-format').value;
+    const csvContent = this.generateCSVContent(format);
+    try {
+      await navigator.clipboard.writeText(csvContent);
+      alert('CSV copied to clipboard! You can now paste it into any email.');
+      document.getElementById('export-modal').classList.add('hidden');
+    } catch (_) {
+      this.showAlert('Clipboard Error', 'Could not copy to clipboard. Please use Download or Share.');
+    }
+  }
+
+  // --- Session & Timing State Controls ---
+  resetLineCoordinates() {
+    this.line = { p1: { x: 0.5, y: 0.05 }, p2: { x: 0.5, y: 0.95 } };
   }
 
   toggleDirection() {
@@ -722,7 +797,6 @@ class AppController {
     await this.initCamera();
   }
 
-  // --- Race Timing Operations ---
   async startRace() {
     if (this.raceState === 'RUNNING') return;
     this.raceState = 'RUNNING';
@@ -756,7 +830,7 @@ class AppController {
   }
 
   async startNewSessionWithPrompt() {
-    if (this.finishers.length > 0 && !confirm('Start a new race? Current results are safely archived in IndexedDB.')) {
+    if (this.finishers.length > 0 && !confirm('Start a new race? Current results are stored in IndexedDB.')) {
       return;
     }
     this.stopRace();
@@ -772,7 +846,7 @@ class AppController {
   }
 
   async clearAllResultsPrompt() {
-    if (!confirm('Permanently delete all stored races and history? This cannot be undone.')) return;
+    if (!confirm('Permanently delete all stored race results? This cannot be undone.')) return;
     this.stopRace();
     this.finishers = [];
     await this.db.clearAll();
@@ -793,7 +867,6 @@ class AppController {
     }
   }
 
-  // --- Display, Formatting & Review Modal ---
   updateClockHUD(now) {
     if (this.raceState === 'RUNNING') {
       const elapsed = now - this.raceStartTime;
@@ -839,12 +912,10 @@ class AppController {
     listElem.innerHTML = '';
     document.getElementById('finisher-count').textContent = this.finishers.length;
 
-    // Display most recent finishers at the top
     const sorted = [...this.finishers].reverse();
-
     sorted.forEach((finisher) => {
       const li = document.createElement('li');
-      li.className = `result-card ${finisher.flags.length > 0 ? 'flagged' : ''}`;
+      li.className = 'result-card';
       li.onclick = () => this.showReviewModal(finisher);
 
       li.innerHTML = `
@@ -870,7 +941,7 @@ class AppController {
     document.getElementById('modal-details').innerHTML = `
       <strong>Elapsed Time:</strong> ${finisher.formattedTime} (${finisher.elapsedMs} ms)<br>
       <strong>Sub-Frame Alpha:</strong> ${finisher.subframeAlpha}<br>
-      <strong>Tracking Keypoint:</strong> ${finisher.keypointUsed} (Score: ${finisher.confidence})<br>
+      <strong>Keypoint:</strong> ${finisher.keypointUsed} (Score: ${finisher.confidence})<br>
       <strong>Recorded At:</strong> ${finisher.recordedAt}<br>
       <strong>Status Flags:</strong> ${finisher.flags.join(', ') || 'NONE (Accurate)'}
     `;
@@ -878,7 +949,6 @@ class AppController {
     document.getElementById('btn-modal-discard').onclick = async () => {
       if (confirm(`Remove finisher #${finisher.position}?`)) {
         this.finishers = this.finishers.filter(f => f.position !== finisher.position);
-        // Re-index remaining finishers
         this.finishers.forEach((f, idx) => f.position = idx + 1);
         if (finisher.id) await this.db.deleteResult(finisher.id);
         this.renderResultsList();
@@ -888,69 +958,6 @@ class AppController {
     modal.classList.remove('hidden');
   }
 
-  // --- CSV Export Engine ---
-  showExportModal() {
-    if (this.finishers.length === 0) {
-      this.showAlert('Export CSV', 'No finishers have crossed the line yet.');
-      return;
-    }
-    document.getElementById('export-modal').classList.remove('hidden');
-  }
-
-  hideExportModal() {
-    document.getElementById('export-modal').classList.add('hidden');
-  }
-
-  async exportCSV(mode) {
-    this.hideExportModal();
-    let csvContent = '';
-    const dateStr = new Date().toISOString().split('T')[0];
-
-    if (mode === 'parkrun_std') {
-      csvContent = 'Position,Time\n';
-      this.finishers.forEach(f => {
-        csvContent += `${f.position},${this.formatParkrunTime(f.elapsedMs)}\n`;
-      });
-    } else if (mode === 'parkrun_barcode') {
-      csvContent = 'Position,Time,Barcode\n';
-      this.finishers.forEach(f => {
-        csvContent += `${f.position},${this.formatParkrunTime(f.elapsedMs)},\n`;
-      });
-    } else {
-      csvContent = 'Position,Time,Elapsed_Ms,Keypoint,Confidence,Alpha,Flags,Recorded_At\n';
-      this.finishers.forEach(f => {
-        csvContent += `${f.position},${f.formattedTime},${f.elapsedMs},${f.keypointUsed},${f.confidence},${f.subframeAlpha},"${f.flags.join(';')}",${f.recordedAt}\n`;
-      });
-    }
-
-    const filename = `race_results_${dateStr}_${mode}.csv`;
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-
-    // Use Web Share API if supported on mobile
-    if (navigator.share && navigator.canShare && navigator.canShare({ files: [new File([blob], filename, { type: 'text/csv' })] })) {
-      try {
-        await navigator.share({
-          files: [new File([blob], filename, { type: 'text/csv' })],
-          title: 'Race Results CSV',
-          text: `Exported race results: ${this.finishers.length} finishers.`
-        });
-        return;
-      } catch (_) {}
-    }
-
-    // Fallback Blob URL Download with delayed revocation for iOS Safari
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => {
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }, 60000);
-  }
-
   showAlert(title, message) {
     document.getElementById('alert-title').textContent = title;
     document.getElementById('alert-message').textContent = message;
@@ -958,14 +965,12 @@ class AppController {
   }
 }
 
-// Register PWA Service Worker
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('./sw.js').catch(err => console.warn('SW registration failed:', err));
   });
 }
 
-// Instantiate on DOM load
 window.addEventListener('DOMContentLoaded', () => {
   window.raceApp = new AppController();
 });

@@ -1,22 +1,25 @@
-const CACHE_NAME = 'racetimer-v2.1';
-const ASSETS_TO_CACHE = [
+const CACHE_NAME = 'racetimer-v2.2';
+
+// Local core shell files to cache immediately
+const LOCAL_ASSETS = [
   './',
   './index.html',
   './style.css',
   './app.js',
-  './manifest.json',
-  'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@4.17.0/dist/tf-core.min.js',
-  'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter@4.17.0/dist/tf-converter.min.js',
-  'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl@4.17.0/dist/tf-backend-webgl.min.js',
-  'https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.3/dist/pose-detection.min.js'
+  './manifest.json'
 ];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(ASSETS_TO_CACHE).catch((err) => {
-        console.warn('Pre-cache failed for some resources, skipping:', err);
-      });
+      // Use Promise.allSettled so an individual failure never blocks the rest of the cache
+      return Promise.allSettled(
+        LOCAL_ASSETS.map((url) =>
+          fetch(url, { cache: 'no-cache' }).then((response) => {
+            if (response.ok) return cache.put(url, response);
+          }).catch((err) => console.warn('Pre-cache skipped for ' + url, err))
+        )
+      );
     }).then(() => self.skipWaiting())
   );
 });
@@ -33,29 +36,26 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
+
   event.respondWith(
     caches.match(event.request).then((cachedResponse) => {
-      if (cachedResponse) {
-        // Fetch in background to update cache (stale-while-revalidate)
-        fetch(event.request).then((networkResponse) => {
+      // Return cached version if found, while refreshing the cache in the background
+      const fetchPromise = fetch(event.request)
+        .then((networkResponse) => {
           if (networkResponse && networkResponse.status === 200) {
-            caches.open(CACHE_NAME).then(c => c.put(event.request, networkResponse));
+            const respClone = networkResponse.clone();
+            caches.open(CACHE_NAME).then(c => c.put(event.request, respClone));
           }
-        }).catch(() => {});
-        return cachedResponse;
-      }
-      return fetch(event.request).then((response) => {
-        if (!response || response.status !== 200 || response.type === 'opaque') {
-          return response;
-        }
-        const respClone = response.clone();
-        caches.open(CACHE_NAME).then(c => c.put(event.request, respClone));
-        return response;
-      });
-    }).catch(() => {
-      if (event.request.headers.get('accept')?.includes('text/html')) {
-        return caches.match('./index.html');
-      }
+          return networkResponse;
+        })
+        .catch(() => {
+          // If offline and requesting navigation, return index.html
+          if (event.request.mode === 'navigate') {
+            return caches.match('./index.html');
+          }
+        });
+
+      return cachedResponse || fetchPromise;
     })
   );
 });
