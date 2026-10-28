@@ -2,12 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>AI Finish Line Mobile - High Speed Race Timer</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <meta name="theme-color" content="#0d1117">
+  <title>AI Finish Line Mobile - Multi-Runner Race Timer</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes, viewport-fit=cover">
+  <meta name="theme-color" content="#000000">
   <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='100' fill='%230a0e14'/%3E%3Cpath d='M120 256h272M256 120v272' stroke='%232ea043' stroke-width='36' stroke-linecap='round'/%3E%3Ccircle cx='256' cy='256' r='60' fill='%233fb950'/%3E%3Cpath d='M180 180l152 152' stroke='%23ffffff' stroke-width='20' stroke-linecap='round'/%3E%3C/svg%3E">
 
-  <!-- Fix GitHub Pages directory resolution bug -->
+  <!-- Subdirectory path normalization for GitHub Pages -->
   <script>
     (function() {
       var p = window.location.pathname;
@@ -19,246 +20,35 @@
 
   <link rel="stylesheet" href="./style.css">
 
+  <!-- Core Layout CSS for zero-latency mobile rendering -->
   <style>
     :root {
-      --bg-dark: #000;
-      --surface-glass: rgba(18, 22, 28, 0.82);
-      --surface-border: rgba(255, 255, 255, 0.15);
+      --bg-dark: #000000;
+      --surface-glass: rgba(18, 22, 28, 0.88);
+      --surface-border: rgba(255, 255, 255, 0.16);
       --accent-green: #2ea043;
       --accent-red: #da3633;
+      --accent-yellow: #d29922;
+      --text-main: #f0f6fc;
+      --text-muted: #8b949e;
       --safe-top: env(safe-area-inset-top, 8px);
       --safe-bottom: env(safe-area-inset-bottom, 8px);
       --safe-left: env(safe-area-inset-left, 8px);
       --safe-right: env(safe-area-inset-right, 8px);
     }
-
     * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-
     html, body {
-      width: 100%;
-      height: 100%;
-      height: 100dvh;
-      overflow: hidden;
-      background-color: #000;
-      color: #fff;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+      width: 100%; height: 100%; height: 100dvh; overflow: hidden;
+      background-color: var(--bg-dark); color: var(--text-main);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       user-select: none;
     }
-
-    /* Edge-to-Edge Fullscreen Camera */
-    .fullscreen-camera {
-      position: fixed;
-      inset: 0;
-      width: 100vw;
-      height: 100vh;
-      height: 100dvh;
-      z-index: 1;
-      background: #000;
-      overflow: hidden;
-    }
-
-    video#webcam {
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-      z-index: 1;
-    }
-
-    canvas#overlay {
-      position: absolute;
-      inset: 0;
-      width: 100%;
-      height: 100%;
-      z-index: 2;
-      touch-action: none;
-    }
-
-    /* Top Left HUD: Clock & Telemetry */
-    .top-left-hud {
-      position: fixed;
-      top: var(--safe-top);
-      left: var(--safe-left);
-      z-index: 10;
-      display: flex;
-      flex-direction: column;
-      gap: 5px;
-      pointer-events: none;
-    }
-
-    .clock-card {
-      background: var(--surface-glass);
-      backdrop-filter: blur(6px);
-      -webkit-backdrop-filter: blur(6px);
-      padding: 3px 10px;
-      border-radius: 6px;
-      border: 1px solid var(--surface-border);
-      display: inline-block;
-    }
-
-    .clock-display {
-      font-family: monospace;
-      font-size: 1.4rem;
-      font-weight: 800;
-      color: #fff;
-    }
-
-    .telemetry-pills {
-      display: flex;
-      gap: 4px;
-      font-size: 0.65rem;
-      font-family: monospace;
-    }
-
-    .pill {
-      padding: 2px 6px;
-      border-radius: 8px;
-      background: rgba(10, 14, 20, 0.85);
-      border: 1px solid var(--surface-border);
-    }
-    .pill.active { border-color: var(--accent-green); color: var(--accent-green); }
-
-    /* Top Right Finishers HUD (Position & Time Only) */
-    .finishers-overlay {
-      position: fixed;
-      top: var(--safe-top);
-      right: var(--safe-right);
-      width: 140px;
-      max-height: 46vh;
-      z-index: 10;
-      background: var(--surface-glass);
-      backdrop-filter: blur(8px);
-      -webkit-backdrop-filter: blur(8px);
-      border: 1px solid var(--surface-border);
-      border-radius: 8px;
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
-    }
-
-    .finishers-overlay-header {
-      padding: 5px 8px;
-      background: rgba(0, 0, 0, 0.4);
-      border-bottom: 1px solid var(--surface-border);
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      font-size: 0.68rem;
-      font-weight: 700;
-      color: #8b949e;
-      letter-spacing: 0.05em;
-    }
-
-    .btn-tiny {
-      background: none;
-      border: none;
-      color: var(--accent-red);
-      font-size: 0.65rem;
-      font-weight: 600;
-      cursor: pointer;
-    }
-
-    .finishers-compact-list {
-      flex: 1;
-      overflow-y: auto;
-      list-style: none;
-      display: flex;
-      flex-direction: column;
-      -webkit-overflow-scrolling: touch;
-    }
-
-    .finisher-compact-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 5px 8px;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-      cursor: pointer;
-      font-family: monospace;
-    }
-    .finisher-compact-row:active { background: rgba(255, 255, 255, 0.2); }
-    .finisher-compact-row:last-child { border-bottom: none; }
-
-    .finisher-compact-pos { font-size: 0.85rem; font-weight: 800; color: var(--accent-green); }
-    .finisher-compact-time { font-size: 0.82rem; font-weight: 600; color: #fff; }
-
-    /* Compact Bottom Floating Controls */
-    .bottom-dock {
-      position: fixed;
-      bottom: 0;
-      left: 0;
-      right: 0;
-      z-index: 20;
-      padding-top: 6px;
-      padding-bottom: max(6px, var(--safe-bottom));
-      padding-left: max(6px, var(--safe-left));
-      padding-right: max(6px, var(--safe-right));
-      background: linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.3) 70%, transparent 100%);
-      display: flex;
-      justify-content: center;
-      pointer-events: none;
-    }
-
-    .dock-container {
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: center;
-      gap: 5px;
-      max-width: 520px;
-      width: 100%;
-      pointer-events: auto;
-    }
-
-    button.btn-small {
-      background: var(--surface-glass);
-      backdrop-filter: blur(6px);
-      -webkit-backdrop-filter: blur(6px);
-      color: #fff;
-      border: 1px solid var(--surface-border);
-      border-radius: 6px;
-      padding: 6px 9px;
-      font-size: 0.72rem;
-      font-weight: 700;
-      cursor: pointer;
-      min-height: 34px;
-      touch-action: manipulation;
-      white-space: nowrap;
-    }
-    button.btn-small:active { transform: scale(0.96); }
-    button.btn-small.btn-primary { background: var(--accent-green); border-color: #3fb950; }
-    button.btn-small.btn-danger { background: var(--accent-red); border-color: #f85149; }
-
-    /* Modals */
-    .modal-overlay {
-      position: fixed; inset: 0;
-      background: rgba(0, 0, 0, 0.75);
-      display: flex; align-items: center; justify-content: center;
-      z-index: 999; padding: 14px;
-      backdrop-filter: blur(4px);
-    }
-    .modal-content {
-      background: #161b22;
-      border: 1px solid var(--surface-border);
-      border-radius: 10px;
-      width: 100%; max-width: 400px; max-height: 85vh;
-      overflow-y: auto; padding: 16px;
-      display: flex; flex-direction: column; gap: 10px;
-    }
-    .form-group { display: flex; flex-direction: column; gap: 4px; text-align: left; }
-    .form-label { font-size: 0.72rem; font-weight: 600; color: #8b949e; }
-    .form-input {
-      background: #0d1117; border: 1px solid var(--surface-border);
-      border-radius: 6px; padding: 8px 10px; color: #fff; font-size: 0.85rem; width: 100%;
-    }
-    .modal-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 6px; }
-    .hidden { display: none !important; }
+    .fullscreen-camera { position: fixed; inset: 0; width: 100vw; height: 100vh; height: 100dvh; z-index: 1; background: #000; overflow: hidden; }
+    video#webcam { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 100%; height: 100%; object-fit: cover; z-index: 1; }
+    canvas#overlay { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 2; touch-action: none; }
   </style>
 
-  <!-- High-Performance TFJS + MoveNet Lightning -->
+  <!-- TensorFlow.js and MoveNet MultiPose dependencies -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@4.17.0/dist/tf-core.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter@4.17.0/dist/tf-converter.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl@4.17.0/dist/tf-backend-webgl.min.js"></script>
@@ -266,37 +56,45 @@
 </head>
 <body>
 
-  <!-- Fullscreen Edge-to-Edge Viewport -->
+  <!-- Fullscreen Camera Viewport -->
   <div class="fullscreen-camera">
     <video id="webcam" playsinline muted autoplay></video>
     <canvas id="overlay"></canvas>
   </div>
 
-  <!-- Top-Left HUD (Clock & Speed Metrics) -->
+  <!-- Top-Left HUD (Clock & Real-Time Performance Telemetry) -->
   <div class="top-left-hud">
-    <div class="clock-card">
+    <div class="clock-card" aria-label="Race Clock">
       <div class="clock-display" id="clock-display">00:00.000</div>
     </div>
     <div class="telemetry-pills">
-      <span class="pill" id="status-pill">STANDBY</span>
+      <span class="pill" id="status-pill">INIT</span>
       <span class="pill" id="dir-pill">DIR: L → R</span>
-      <span class="pill" id="fps-metric">60 FPS</span>
+      <span class="pill" id="fps-render">RND: --</span>
+      <span class="pill" id="fps-cam">CAM: --</span>
+      <span class="pill" id="fps-inf">INF: --</span>
+      <span class="pill" id="active-tracks">0 RUNNERS</span>
     </div>
   </div>
 
-  <!-- Top-Right HUD: Minimal Finishers (Position & Time Only) -->
-  <div class="finishers-overlay">
+  <!-- Top-Right HUD: Collapsible Minimal Finishers (Position & Time Only) -->
+  <div class="finishers-overlay" id="finishers-panel" aria-label="Finishers List">
     <div class="finishers-overlay-header">
       <span>Finishes (<span id="finisher-count">0</span>)</span>
-      <button class="btn-tiny" id="btn-clear-results">Clear</button>
+      <div class="header-actions">
+        <button class="btn-toggle-panel" id="btn-toggle-finishers" title="Toggle Panel" aria-label="Toggle Panel">▼</button>
+        <button class="btn-tiny" id="btn-clear-results" title="Clear current session">Clear</button>
+      </div>
     </div>
-    <ul class="finishers-compact-list" id="results-list"></ul>
+    <ul class="finishers-compact-list" id="results-list" role="list">
+      <!-- Minimal Position and Formatted Time -->
+    </ul>
   </div>
 
-  <!-- Bottom Floating Compact Controls -->
+  <!-- Bottom Floating Control Dock -->
   <div class="bottom-dock">
-    <div class="dock-container">
-      <button class="btn-small btn-primary" id="btn-start">START</button>
+    <div class="dock-container" role="toolbar" aria-label="Race Timing Controls">
+      <button class="btn-small btn-primary" id="btn-start" disabled>START</button>
       <button class="btn-small btn-danger" id="btn-stop" disabled>STOP</button>
       <button class="btn-small" id="btn-dir">DIR</button>
       <button class="btn-small" id="btn-reset-line">LINE</button>
@@ -306,11 +104,11 @@
     </div>
   </div>
 
-  <!-- Finisher Review Modal -->
-  <div class="modal-overlay hidden" id="review-modal">
+  <!-- Finisher Audit Review Modal -->
+  <div class="modal-overlay hidden" id="review-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
     <div class="modal-content">
-      <h3 id="modal-title" style="font-size:1rem;">Finisher Details</h3>
-      <div id="modal-details" style="font-size:0.8rem; line-height:1.5; color:#c9d1d9;"></div>
+      <h3 id="modal-title" style="font-size:1.05rem;">Finisher Audit</h3>
+      <div id="modal-details" style="font-size:0.82rem; line-height:1.55; color:var(--text-main);"></div>
       <div class="modal-actions">
         <button class="btn-small btn-danger" id="btn-modal-discard">Discard Finisher</button>
         <button class="btn-small" id="btn-modal-close">Close</button>
@@ -318,34 +116,45 @@
     </div>
   </div>
 
-  <!-- Email Export Modal -->
-  <div class="modal-overlay hidden" id="export-modal">
+  <!-- Email & CSV Export Modal -->
+  <div class="modal-overlay hidden" id="export-modal" role="dialog" aria-modal="true" aria-labelledby="export-modal-title">
     <div class="modal-content">
-      <h3 style="font-size:1rem;">Export Race Results</h3>
+      <h3 id="export-modal-title" style="font-size:1.05rem;">Export Results</h3>
 
       <div class="form-group">
-        <label class="form-label" for="export-email">Recipient Email:</label>
-        <input class="form-input" type="email" id="export-email" placeholder="e.g. director@parkrun.com" autocomplete="email">
+        <label class="form-label" for="export-email">Recipient Email Address:</label>
+        <input class="form-input" type="email" id="export-email" placeholder="e.g. results@parkrun.com or timer@gmail.com" autocomplete="email">
       </div>
 
       <div class="form-group">
-        <label class="form-label">Format:</label>
+        <label class="form-label" for="export-format">Export Format:</label>
         <select class="form-input" id="export-format">
           <option value="parkrun_std">Parkrun Standard (Position, Time)</option>
           <option value="parkrun_barcode">Parkrun Scanned (Position, Time, Barcode)</option>
-          <option value="audit">Full Timing Audit (Sub-frame ms)</option>
+          <option value="audit">Full Timing Audit (Sub-frame Alpha, Session, ms)</option>
         </select>
       </div>
 
-      <div style="display:flex; flex-direction:column; gap:5px; margin-top:4px;">
+      <div class="export-options-grid">
         <button class="btn-small btn-primary" id="btn-email-share">Share CSV File to Email App</button>
-        <button class="btn-small" id="btn-email-mailto">Open Email App (Embedded CSV Body)</button>
-        <button class="btn-small" id="btn-download-csv">Download CSV File</button>
+        <button class="btn-small" id="btn-email-mailto">Open Email App (Embedded Body)</button>
+        <button class="btn-small" id="btn-download-csv">Download CSV File Directly</button>
         <button class="btn-small" id="btn-copy-csv">Copy CSV to Clipboard</button>
       </div>
 
       <div class="modal-actions">
         <button class="btn-small" id="btn-export-cancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- System Alert Modal -->
+  <div class="modal-overlay hidden" id="alert-modal" role="alertdialog" aria-modal="true" aria-labelledby="alert-title">
+    <div class="modal-content">
+      <h3 id="alert-title" style="color:var(--accent-red); font-size:1.05rem;">System Notice</h3>
+      <p id="alert-message" style="font-size:0.86rem; line-height:1.45;"></p>
+      <div class="modal-actions">
+        <button class="btn-small btn-primary" id="btn-alert-dismiss">Dismiss</button>
       </div>
     </div>
   </div>

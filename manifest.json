@@ -1,15 +1,16 @@
 {
-  "name": "AI Finish Line Mobile",
+  "name": "AI Finish Line Mobile - Race Timer",
   "short_name": "RaceTimer",
-  "description": "Multi-person AI race timing and finish line tracking with sub-frame accuracy",
+  "description": "High-precision multi-runner AI race timing and finish line tracking with sub-frame accuracy",
   "start_url": "./index.html",
+  "scope": "./",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#0d1117",
-  "theme_color": "#0d1117",
+  "background_color": "#000000",
+  "theme_color": "#000000",
   "icons": [
     {
-      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='100' fill='%230d1117'/%3E%3Cpath d='M96 256h320M256 96v320' stroke='%2338ef7d' stroke-width='32' stroke-linecap='round'/%3E%3Ccircle cx='256' cy='256' r='64' fill='%2311998e'/%3E%3Cpath d='M160 160l192 192' stroke='%23ffffff' stroke-width='16' stroke-linecap='round'/%3E%3C/svg%3E",
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='100' fill='%230a0e14'/%3E%3Cpath d='M120 256h272M256 120v272' stroke='%232ea043' stroke-width='36' stroke-linecap='round'/%3E%3Ccircle cx='256' cy='256' r='60' fill='%233fb950'/%3E%3Cpath d='M180 180l152 152' stroke='%23ffffff' stroke-width='20' stroke-linecap='round'/%3E%3C/svg%3E",
       "sizes": "192x192 512x512",
       "type": "image/svg+xml",
       "purpose": "any maskable"

@@ -2,89 +2,84 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>RaceTimer Engine Unit & Integration Tests</title>
+  <title>RaceTimer Engine Regression Tests</title>
   <style>
-    body { font-family: monospace; background: #0d1117; color: #c9d1d9; padding: 20px; }
+    body { font-family: monospace; background: #0d1117; color: #c9d1d9; padding: 24px; line-height: 1.5; }
+    h2 { color: #58a6ff; }
     .pass { color: #38ef7d; font-weight: bold; }
     .fail { color: #f85149; font-weight: bold; }
-    .summary { margin-top: 20px; padding: 10px; border-top: 1px solid #30363d; }
+    .summary { margin-top: 20px; padding: 12px; border-top: 1px solid #30363d; font-size: 1.1rem; }
   </style>
 </head>
 <body>
-  <h2>AI Finish Line Mobile - Test Runner</h2>
+  <h2>AI Finish Line Mobile - Architecture Verification Suite</h2>
   <div id="test-output"></div>
-  <div class="summary" id="test-summary">Running tests...</div>
+  <div class="summary" id="test-summary">Executing tests...</div>
 
-  <script src="app.js"></script>
+  <script src="./app.js"></script>
   <script>
-    (async function runTests() {
+    (async function runTestSuite() {
       const output = document.getElementById('test-output');
       const summary = document.getElementById('test-summary');
       let passed = 0, failed = 0;
 
-      function assert(desc, condition) {
+      function assert(name, condition) {
         const div = document.createElement('div');
         if (condition) {
-          div.innerHTML = `<span class="pass">[PASS]</span> ${desc}`;
+          div.innerHTML = `<span class="pass">[PASS]</span> ${name}`;
           passed++;
         } else {
-          div.innerHTML = `<span class="fail">[FAIL]</span> ${desc}`;
+          div.innerHTML = `<span class="fail">[FAIL]</span> ${name}`;
           failed++;
         }
         output.appendChild(div);
       }
 
-      console.log('Starting automated tests...');
-
-      // 1. Test Line Signed Distance & Side Tests
-      const dLeft = TimingGeometry.signedDistanceToLine(0.2, 0.5, 0.5, 0.0, 0.5, 1.0);
-      const dRight = TimingGeometry.signedDistanceToLine(0.8, 0.5, 0.5, 0.0, 0.5, 1.0);
-      assert('Geometry: Point to left has negative signed distance', dLeft < 0);
-      assert('Geometry: Point to right has positive signed distance', dRight > 0);
-
-      // 2. Test Directional Crossing & Alpha Sub-Frame Interpolation
+      // Vertical line from top (0.5, 0.0) to bottom (0.5, 1.0)
       const lineA = { x: 0.5, y: 0.0 };
       const lineB = { x: 0.5, y: 1.0 };
-      const crossingLTR = TimingGeometry.evaluateCrossing(0.4, 0.5, 0.6, 0.5, lineA, lineB, 'ltr');
-      assert('Crossing: Valid Left-to-Right crossing detected', crossingLTR !== null);
-      assert('Sub-frame: Exact 50% midpoint alpha calculated correctly', Math.abs(crossingLTR.alpha - 0.5) < 0.001);
 
-      // 3. Test Invalid Reverse Direction Rejection
-      const reverseCrossing = TimingGeometry.evaluateCrossing(0.6, 0.5, 0.4, 0.5, lineA, lineB, 'ltr');
-      assert('Crossing: Reverse crossing rejected when direction is LTR', reverseCrossing === null);
+      // Test 1: Signed Distance Directional Symmetry
+      const sLeft = TimingMath.signedDistance(0.2, 0.5, lineA.x, lineA.y, lineB.x, lineB.y);
+      const sRight = TimingMath.signedDistance(0.8, 0.5, lineA.x, lineA.y, lineB.x, lineB.y);
+      assert('Geometry: Point to left has positive signed distance', sLeft > 0);
+      assert('Geometry: Point to right has negative signed distance', sRight < 0);
 
-      // 4. Test Keypoint Fallback Priority
-      const dummyTrack = new RunnerTrack(99, {
-        box: {},
-        keypoints: [
-          { name: 'left_ankle', score: 0.1, x: 0.5, y: 0.9 },
-          { name: 'right_ankle', score: 0.1, x: 0.5, y: 0.9 },
-          { name: 'left_knee', score: 0.85, x: 0.5, y: 0.7 },
-          { name: 'right_knee', score: 0.88, x: 0.5, y: 0.7 }
-        ]
-      }, 1000);
-      const anchor = dummyTrack.history[0];
-      assert('Keypoint Fallback: Falls back to knee when ankle score < 0.3', anchor.keypointName === 'knee_fallback');
+      // Test 2: Valid Left-to-Right Crossing with Sub-Frame Interpolation
+      const crossLTR = TimingMath.evaluateSegmentCrossing(0.4, 0.5, 0.6, 0.5, lineA, lineB, 'ltr');
+      assert('Crossing: Valid Left-to-Right crossing detected', crossLTR !== null);
+      assert('Sub-frame: Exact 50% midpoint alpha calculated correctly', Math.abs(crossLTR.alpha - 0.5) < 0.001);
 
-      // 5. Test Multi-Person Tracker Association
-      const tracker = new MultiPersonTracker();
-      const p1 = [{ box: {}, keypoints: Array(17).fill({ x: 0.2, y: 0.5, score: 0.9 }) }];
-      tracker.update(p1, 1000);
-      assert('Tracker: New track spawned with ID 1', tracker.tracks.length === 1 && tracker.tracks[0].id === 1);
+      // Test 3: Reject Opposite Movement
+      const reverseCrossing = TimingMath.evaluateSegmentCrossing(0.6, 0.5, 0.4, 0.5, lineA, lineB, 'ltr');
+      assert('Crossing: Reverse crossing rejected when mode is LTR', reverseCrossing === null);
 
-      const p2 = [{ box: {}, keypoints: Array(17).fill({ x: 0.22, y: 0.5, score: 0.9 }) }];
-      tracker.update(p2, 1033);
-      assert('Tracker: Proximity reassociation maintains track ID', tracker.tracks[0].id === 1);
+      // Test 4: Reject Crossing Outside Finite Segment Endpoints
+      const outsideCrossing = TimingMath.evaluateSegmentCrossing(0.4, 1.5, 0.6, 1.5, lineA, lineB, 'ltr');
+      assert('Crossing: Rejects crossing outside finite segment endpoints', outsideCrossing === null);
 
-      // 6. Test Duplicate Crossing Suppression Lockout
-      const cross1 = TimingGeometry.evaluateCrossing(0.48, 0.5, 0.52, 0.5, lineA, lineB, 'ltr');
-      assert('Duplicate Check: Sub-frame crossing evaluates accurately', cross1.alpha > 0);
+      // Test 5: Multi-Runner Tracker Association & Independent IDs
+      const tracker = new MultiRunnerTracker();
+      const frame1Poses = [
+        { box: { xMin: 0.2, yMin: 0.3, xMax: 0.3, yMax: 0.7 }, score: 0.9, keypoints: Array(17).fill({ x: 0.25, y: 0.5, score: 0.85 }) },
+        { box: { xMin: 0.6, yMin: 0.3, xMax: 0.7, yMax: 0.7 }, score: 0.9, keypoints: Array(17).fill({ x: 0.65, y: 0.5, score: 0.85 }) }
+      ];
+      const tracks1 = tracker.update(frame1Poses, 1000);
+      assert('Tracker: Identifies and creates 2 independent tracks', tracks1.length === 2 && tracks1[0].id !== tracks1[1].id);
 
-      // 7. Test Parkrun CSV Timestamp Formatting
-      const formattedParkrun = AppController.prototype.formatParkrunTime(3665000); // 1h 1m 5s
-      assert('Parkrun Format: Generates correct zero-padded hh:mm:ss format', formattedParkrun === '01:01:05');
+      // Test 6: Per-Runner Identity Preservation
+      const frame2Poses = [
+        { box: { xMin: 0.22, yMin: 0.3, xMax: 0.32, yMax: 0.7 }, score: 0.9, keypoints: Array(17).fill({ x: 0.27, y: 0.5, score: 0.85 }) },
+        { box: { xMin: 0.62, yMin: 0.3, xMax: 0.72, yMax: 0.7 }, score: 0.9, keypoints: Array(17).fill({ x: 0.67, y: 0.5, score: 0.85 }) }
+      ];
+      const tracks2 = tracker.update(frame2Poses, 1033);
+      assert('Tracker: Preserves IDs across successive frames', tracks2[0].id === tracks1[0].id && tracks2[1].id === tracks1[1].id);
 
-      summary.innerHTML = `Tests Complete: ${passed} Passed, ${failed} Failed`;
+      // Test 7: Parkrun Format HH:MM:SS Compliance
+      const parkrunStr = RaceTimerApp.prototype.formatParkrunTime(3665000);
+      assert('Export: Parkrun time padded to 01:01:05', parkrunStr === '01:01:05');
+
+      summary.innerHTML = `Suite Result: ${passed} Passed, ${failed} Failed`;
       summary.className = failed === 0 ? 'summary pass' : 'summary fail';
     })();
   </script>
