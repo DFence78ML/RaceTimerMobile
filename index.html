@@ -2,46 +2,107 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>AI Finish Line Mobile</title>
+  <title>AI Finish Line Mobile - Multi-Person Race Timer</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes, viewport-fit=cover">
+  <meta name="theme-color" content="#0d1117">
   <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="style.css">
-
-  <!-- TensorFlow.js and MoveNet Pose Detection -->
+  
+  <!-- TensorFlow.js dependencies -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@4.17.0/dist/tf-core.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter@4.17.0/dist/tf-converter.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl@4.17.0/dist/tf-backend-webgl.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.3/dist/pose-detection.min.js"></script>
 </head>
 <body>
-  <div id="app-container">
-    <video id="webcam" playsinline muted autoplay></video>
-    <canvas id="overlay-canvas"></canvas>
 
-    <!-- Top Status Bar -->
-    <div id="hud-top">
-      <div id="race-clock">00:00.000</div>
-      <div id="status-badges">
-        <span id="badge-state" class="badge stopped">STOPPED</span>
-        <span id="badge-fps" class="badge">FPS: 00</span>
-        <span id="badge-dir" class="badge">DIR: L &rarr; R</span>
+  <div class="left-pane">
+    <header>
+      <div class="title-badge">
+        <h1>AI Finish Line</h1>
+        <span class="pill" id="model-pill">MoveNet MultiPose</span>
+      </div>
+      <div class="status-pills">
+        <span class="pill" id="status-pill">STANDBY</span>
+        <span class="pill" id="dir-pill">DIR: L → R</span>
+      </div>
+    </header>
+
+    <div class="viewport-container" id="viewport-container">
+      <video id="webcam" playsinline muted autoplay></video>
+      <canvas id="overlay"></canvas>
+      
+      <div class="hud-overlay">
+        <div class="clock-card">
+          <div class="clock-display" id="clock-display">00:00.000</div>
+        </div>
+        <div class="telemetry-card">
+          <span id="fps-render">Render: -- fps</span>
+          <span id="fps-cam">Camera: -- fps</span>
+          <span id="fps-inf">Inference: -- fps</span>
+          <span id="active-tracks">Tracks: 0</span>
+        </div>
       </div>
     </div>
 
-    <!-- Live Finishers Feed Drawer -->
-    <div id="results-drawer">
-      <div class="drawer-header">Recent Finishers (<span id="finisher-count">0</span>)</div>
-      <div id="results-list"></div>
+    <div class="control-bar">
+      <button class="btn btn-primary" id="btn-start">START</button>
+      <button class="btn btn-danger" id="btn-stop" disabled>STOP</button>
+      <button class="btn" id="btn-dir">TOGGLE DIR</button>
+      <button class="btn" id="btn-reset-line">RESET LINE</button>
+      <button class="btn" id="btn-flip-cam">FLIP CAM</button>
+      <button class="btn" id="btn-export">EXPORT CSV</button>
+      <button class="btn" id="btn-new-race">NEW RACE</button>
     </div>
+  </div>
 
-    <!-- Bottom Controls -->
-    <div id="hud-bottom">
-      <button id="btn-start" class="btn btn-green">START</button>
-      <button id="btn-stop" class="btn btn-red" disabled>STOP</button>
-      <button id="btn-dir" class="btn">DIR</button>
-      <button id="btn-reset-line" class="btn">RESET LINE</button>
-      <button id="btn-export-parkrun" class="btn btn-blue">EXPORT CSV</button>
-      <button id="btn-toggle-cam" class="btn">FLIP CAM</button>
+  <div class="right-pane">
+    <section class="results-section">
+      <div class="results-header">
+        <h2>FINISHERS (<span id="finisher-count">0</span>)</h2>
+        <button class="btn" id="btn-clear-results" style="min-height:30px; padding:4px 8px; font-size:0.75rem;">Clear All</button>
+      </div>
+      <ul class="results-list" id="results-list">
+        <!-- Result entries dynamically rendered here -->
+      </ul>
+    </section>
+  </div>
+
+  <!-- Review / Audit Modal -->
+  <div class="modal-overlay hidden" id="review-modal">
+    <div class="modal-content">
+      <h3 id="modal-title">Finisher Review #1</h3>
+      <img id="modal-snapshot" class="modal-snapshot" alt="Crossing photo evidence">
+      <div id="modal-details" style="font-size:0.85rem; line-height:1.5;"></div>
+      <div class="modal-actions">
+        <button class="btn btn-danger" id="btn-modal-discard">Discard Finisher</button>
+        <button class="btn" id="btn-modal-close">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Export Options Modal -->
+  <div class="modal-overlay hidden" id="export-modal">
+    <div class="modal-content">
+      <h3>Export Race Results</h3>
+      <p style="font-size:0.85rem; color:var(--text-muted);">Select the required format:</p>
+      <button class="btn btn-primary" id="btn-export-parkrun">Parkrun Standard (Position,Time)</button>
+      <button class="btn" id="btn-export-parkrun-barcode">Parkrun Scanned (Position,Time,Barcode)</button>
+      <button class="btn" id="btn-export-audit">Full Timing Audit CSV</button>
+      <div class="modal-actions">
+        <button class="btn" id="btn-export-cancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- System Warning / Failure Modal -->
+  <div class="modal-overlay hidden" id="alert-modal">
+    <div class="modal-content">
+      <h3 id="alert-title" style="color:var(--accent-red);">System Alert</h3>
+      <p id="alert-message" style="font-size:0.9rem; line-height:1.4;"></p>
+      <div class="modal-actions">
+        <button class="btn btn-primary" id="btn-alert-dismiss">Dismiss</button>
+      </div>
     </div>
   </div>
 

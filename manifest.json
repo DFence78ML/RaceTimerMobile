@@ -1,16 +1,18 @@
 {
   "name": "AI Finish Line Mobile",
-  "short_name": "FinishLine",
+  "short_name": "RaceTimer",
+  "description": "Multi-person AI race timing and finish line tracking with sub-frame accuracy",
   "start_url": "./index.html",
   "display": "standalone",
-  "orientation": "landscape",
-  "background_color": "#111111",
-  "theme_color": "#111111",
+  "orientation": "any",
+  "background_color": "#0d1117",
+  "theme_color": "#0d1117",
   "icons": [
     {
-      "src": "icon-192.png",
-      "sizes": "192x192",
-      "type": "image/png"
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='100' fill='%230d1117'/%3E%3Cpath d='M96 256h320M256 96v320' stroke='%2338ef7d' stroke-width='32' stroke-linecap='round'/%3E%3Ccircle cx='256' cy='256' r='64' fill='%2311998e'/%3E%3Cpath d='M160 160l192 192' stroke='%23ffffff' stroke-width='16' stroke-linecap='round'/%3E%3C/svg%3E",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
     }
   ]
 }

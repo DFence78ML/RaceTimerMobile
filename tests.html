@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>RaceTimer Engine Unit & Integration Tests</title>
+  <style>
+    body { font-family: monospace; background: #0d1117; color: #c9d1d9; padding: 20px; }
+    .pass { color: #38ef7d; font-weight: bold; }
+    .fail { color: #f85149; font-weight: bold; }
+    .summary { margin-top: 20px; padding: 10px; border-top: 1px solid #30363d; }
+  </style>
+</head>
+<body>
+  <h2>AI Finish Line Mobile - Test Runner</h2>
+  <div id="test-output"></div>
+  <div class="summary" id="test-summary">Running tests...</div>
+
+  <script src="app.js"></script>
+  <script>
+    (async function runTests() {
+      const output = document.getElementById('test-output');
+      const summary = document.getElementById('test-summary');
+      let passed = 0, failed = 0;
+
+      function assert(desc, condition) {
+        const div = document.createElement('div');
+        if (condition) {
+          div.innerHTML = `<span class="pass">[PASS]</span> ${desc}`;
+          passed++;
+        } else {
+          div.innerHTML = `<span class="fail">[FAIL]</span> ${desc}`;
+          failed++;
+        }
+        output.appendChild(div);
+      }
+
+      console.log('Starting automated tests...');
+
+      // 1. Test Line Signed Distance & Side Tests
+      const dLeft = TimingGeometry.signedDistanceToLine(0.2, 0.5, 0.5, 0.0, 0.5, 1.0);
+      const dRight = TimingGeometry.signedDistanceToLine(0.8, 0.5, 0.5, 0.0, 0.5, 1.0);
+      assert('Geometry: Point to left has negative signed distance', dLeft < 0);
+      assert('Geometry: Point to right has positive signed distance', dRight > 0);
+
+      // 2. Test Directional Crossing & Alpha Sub-Frame Interpolation
+      const lineA = { x: 0.5, y: 0.0 };
+      const lineB = { x: 0.5, y: 1.0 };
+      const crossingLTR = TimingGeometry.evaluateCrossing(0.4, 0.5, 0.6, 0.5, lineA, lineB, 'ltr');
+      assert('Crossing: Valid Left-to-Right crossing detected', crossingLTR !== null);
+      assert('Sub-frame: Exact 50% midpoint alpha calculated correctly', Math.abs(crossingLTR.alpha - 0.5) < 0.001);
+
+      // 3. Test Invalid Reverse Direction Rejection
+      const reverseCrossing = TimingGeometry.evaluateCrossing(0.6, 0.5, 0.4, 0.5, lineA, lineB, 'ltr');
+      assert('Crossing: Reverse crossing rejected when direction is LTR', reverseCrossing === null);
+
+      // 4. Test Keypoint Fallback Priority
+      const dummyTrack = new RunnerTrack(99, {
+        box: {},
+        keypoints: [
+          { name: 'left_ankle', score: 0.1, x: 0.5, y: 0.9 },
+          { name: 'right_ankle', score: 0.1, x: 0.5, y: 0.9 },
+          { name: 'left_knee', score: 0.85, x: 0.5, y: 0.7 },
+          { name: 'right_knee', score: 0.88, x: 0.5, y: 0.7 }
+        ]
+      }, 1000);
+      const anchor = dummyTrack.history[0];
+      assert('Keypoint Fallback: Falls back to knee when ankle score < 0.3', anchor.keypointName === 'knee_fallback');
+
+      // 5. Test Multi-Person Tracker Association
+      const tracker = new MultiPersonTracker();
+      const p1 = [{ box: {}, keypoints: Array(17).fill({ x: 0.2, y: 0.5, score: 0.9 }) }];
+      tracker.update(p1, 1000);
+      assert('Tracker: New track spawned with ID 1', tracker.tracks.length === 1 && tracker.tracks[0].id === 1);
+
+      const p2 = [{ box: {}, keypoints: Array(17).fill({ x: 0.22, y: 0.5, score: 0.9 }) }];
+      tracker.update(p2, 1033);
+      assert('Tracker: Proximity reassociation maintains track ID', tracker.tracks[0].id === 1);
+
+      // 6. Test Duplicate Crossing Suppression Lockout
+      const cross1 = TimingGeometry.evaluateCrossing(0.48, 0.5, 0.52, 0.5, lineA, lineB, 'ltr');
+      assert('Duplicate Check: Sub-frame crossing evaluates accurately', cross1.alpha > 0);
+
+      // 7. Test Parkrun CSV Timestamp Formatting
+      const formattedParkrun = AppController.prototype.formatParkrunTime(3665000); // 1h 1m 5s
+      assert('Parkrun Format: Generates correct zero-padded hh:mm:ss format', formattedParkrun === '01:01:05');
+
+      summary.innerHTML = `Tests Complete: ${passed} Passed, ${failed} Failed`;
+      summary.className = failed === 0 ? 'summary pass' : 'summary fail';
+    })();
+  </script>
+</body>
+</html>

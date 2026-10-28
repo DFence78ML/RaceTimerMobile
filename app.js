@@ -1,456 +1,971 @@
 /**
- * AI Finish Line Mobile - Complete PWA Timing Engine
- * Implements monotonic timing, sub-frame linear crossing interpolation,
- * MoveNet pose tracking, touch drag adjustments, and Parkrun CSV export.
+ * AI Finish Line Mobile - Complete Production Application
+ * High precision multi-person pose timing, tracking, and persistence
  */
 
-// Configuration
-const CONFIG = {
-  keypointThreshold: 0.4,
-  maxGapSeconds: 0.35,
-  minVelocityPxS: 50.0,
-  lateralTolerancePct: 0.1,
-  leftAnkleIdx: 15,
-  rightAnkleIdx: 16
-};
-
-// Geometry Class (ported from finish_line.py)
-class FinishLineGeometry {
-  constructor(w, h) {
-    this.p1 = { x: Math.round(w * 0.70), y: Math.round(h * 0.05) };
-    this.p2 = { x: Math.round(w * 0.70), y: Math.round(h * 0.95) };
-    this.directionSign = -1; // -1: Left->Right, 1: Right->Left, 0: Either
-    this.updateNormals();
+// ==========================================
+// 1. Database & Persistence Layer (IndexedDB)
+// ==========================================
+class RaceDatabase {
+  constructor() {
+    this.dbName = 'RaceTimerDB';
+    this.version = 1;
+    this.db = null;
   }
 
-  updateNormals() {
-    this.dx = this.p2.x - this.p1.x;
-    this.dy = this.p2.y - this.p1.y;
-    this.length = Math.hypot(this.dx, this.dy) || 1e-6;
-    this.nx = -this.dy / this.length;
-    this.ny = this.dx / this.length;
-  }
-
-  signedDistance(pt) {
-    return (pt.x - this.p1.x) * this.nx + (pt.y - this.p1.y) * this.ny;
-  }
-
-  checkIntersection(prev, curr) {
-    const rx = curr.x - prev.x;
-    const ry = curr.y - prev.y;
-    const sx = this.p2.x - this.p1.x;
-    const sy = this.p2.y - this.p1.y;
-    const denom = rx * sy - ry * sx;
-
-    if (Math.abs(denom) < 1e-6) return { valid: false, alpha: 0 };
-
-    const qpx = this.p1.x - prev.x;
-    const qpy = this.p1.y - prev.y;
-    const alpha = (qpx * sy - qpy * sx) / denom;
-    const beta = (qpx * ry - qpy * rx) / denom;
-
-    if (alpha < 0.0 || alpha > 1.0) return { valid: false, alpha };
-    if (beta < -CONFIG.lateralTolerancePct || beta > (1.0 + CONFIG.lateralTolerancePct)) {
-      return { valid: false, alpha };
-    }
-
-    const d0 = this.signedDistance(prev);
-    const d1 = this.signedDistance(curr);
-    const negToPos = d0 < 0 && d1 >= 0 && d1 > d0;
-    const posToNeg = d0 > 0 && d1 <= 0 && d1 < d0;
-
-    let allowed = false;
-    if (this.directionSign < 0) allowed = posToNeg;
-    else if (this.directionSign > 0) allowed = negToPos;
-    else allowed = posToNeg || negToPos;
-
-    return { valid: allowed, alpha };
-  }
-}
-
-// Global App State
-const state = {
-  video: document.getElementById('webcam'),
-  canvas: document.getElementById('overlay-canvas'),
-  ctx: document.getElementById('overlay-canvas').getContext('2d'),
-  detector: null,
-  geometry: null,
-  facingMode: "environment",
-  isRaceRunning: false,
-  raceStartMonoMs: 0,
-  tracks: new Map(), // trackId -> { history: [{pt, timeMs}], confirmed: bool }
-  nextTrackId: 1,
-  results: [],
-  selectedHandle: null,
-  touchDragOffset: { x: 0, y: 0 },
-  fpsCounter: { count: 0, lastTick: performance.now(), value: 0 },
-  wakeLock: null
-};
-
-// Format seconds into MM:SS.mmm
-function formatTime(totalSec) {
-  const m = Math.floor(Math.max(0, totalSec) / 60);
-  const s = (Math.max(0, totalSec) % 60).toFixed(3).padStart(6, '0');
-  return `${String(m).padStart(2, '0')}:${s}`;
-}
-
-// Initialize Camera
-async function setupCamera() {
-  const constraints = {
-    audio: false,
-    video: {
-      facingMode: state.facingMode,
-      width: { ideal: 1280 },
-      height: { ideal: 720 },
-      frameRate: { ideal: 60, min: 30 }
-    }
-  };
-
-  const stream = await navigator.mediaDevices.getUserMedia(constraints);
-  state.video.srcObject = stream;
-
-  return new Promise((resolve) => {
-    state.video.onloadedmetadata = () => {
-      state.video.play();
-      state.canvas.width = state.video.videoWidth;
-      state.canvas.height = state.video.videoHeight;
-      if (!state.geometry) {
-        state.geometry = new FinishLineGeometry(state.canvas.width, state.canvas.height);
-      }
-      resolve();
-    };
-  });
-}
-
-// Request Screen Wake Lock so phone doesn't sleep mid-race
-async function acquireWakeLock() {
-  try {
-    if ('wakeLock' in navigator) {
-      state.wakeLock = await navigator.wakeLock.request('screen');
-    }
-  } catch (e) {
-    console.warn("Wake lock failed: ", e);
-  }
-}
-
-// Load MoveNet Model
-async function initDetector() {
-  const model = poseDetection.SupportedModels.MoveNet;
-  state.detector = await poseDetection.createDetector(model, {
-    modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING,
-    enableSmoothing: true
-  });
-}
-
-// Timing point extraction from pose (ankles or fallback)
-function extractTimingPoint(pose) {
-  if (!pose || !pose.keypoints) return null;
-  const lAnkle = pose.keypoints[CONFIG.leftAnkleIdx];
-  const rAnkle = pose.keypoints[CONFIG.rightAnkleIdx];
-  const lValid = lAnkle && lAnkle.score >= CONFIG.keypointThreshold;
-  const rValid = rAnkle && rAnkle.score >= CONFIG.keypointThreshold;
-
-  if (lValid && rValid) {
-    return {
-      x: (lAnkle.x + rAnkle.x) / 2,
-      y: (lAnkle.y + rAnkle.y) / 2,
-      conf: (lAnkle.score + rAnkle.score) / 2,
-      source: "ANKLE_MIDPOINT"
-    };
-  }
-  if (lValid) return { x: lAnkle.x, y: lAnkle.y, conf: lAnkle.score, source: "LEFT_ANKLE" };
-  if (rValid) return { x: rAnkle.x, y: rAnkle.y, conf: rAnkle.score, source: "RIGHT_ANKLE" };
-  return null;
-}
-
-// Process track logic and check crossings
-function updateTracking(point, nowMonoMs) {
-  let matchedTrackId = null;
-  let minDist = 120; // Max jump radius in pixels
-
-  // Find nearest track
-  for (const [id, tr] of state.tracks.entries()) {
-    if (tr.confirmed) continue;
-    const lastPt = tr.history[tr.history.length - 1].pt;
-    const d = Math.hypot(point.x - lastPt.x, point.y - lastPt.y);
-    if (d < minDist) {
-      minDist = d;
-      matchedTrackId = id;
-    }
-  }
-
-  if (matchedTrackId === null) {
-    matchedTrackId = state.nextTrackId++;
-    state.tracks.set(matchedTrackId, {
-      history: [{ pt: point, timeMs: nowMonoMs }],
-      confirmed: false
-    });
-    return;
-  }
-
-  const track = state.tracks.get(matchedTrackId);
-  const prevObservation = track.history[track.history.length - 1];
-  track.history.push({ pt: point, timeMs: nowMonoMs });
-
-  if (track.history.length < 2 || track.confirmed) return;
-
-  const dt = (nowMonoMs - prevObservation.timeMs) / 1000.0;
-  if (dt <= 0 || dt > CONFIG.maxGapSeconds) return;
-
-  const speed = Math.hypot(point.x - prevObservation.pt.x, point.y - prevObservation.pt.y) / dt;
-  if (speed < CONFIG.minVelocityPxS) return;
-
-  // Intersect line
-  const { valid, alpha } = state.geometry.checkIntersection(prevObservation.pt, point);
-  if (valid) {
-    track.confirmed = true;
-    const crossingMonoMs = prevObservation.timeMs + alpha * (nowMonoMs - prevObservation.timeMs);
-    const elapsedSec = (crossingMonoMs - state.raceStartMonoMs) / 1000.0;
-    const isUncertain = dt > 0.25 || elapsedSec < 0;
-
-    recordFinisher({
-      position: state.results.length + 1,
-      trackId: matchedTrackId,
-      elapsedSec: elapsedSec,
-      formattedTime: formatTime(elapsedSec),
-      isUncertain: isUncertain,
-      source: point.source
+  async init() {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(this.dbName, this.version);
+      request.onupgradeneeded = (e) => {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains('sessions')) {
+          db.createObjectStore('sessions', { keyPath: 'id' });
+        }
+        if (!db.objectStoreNames.contains('results')) {
+          const resStore = db.createObjectStore('results', { keyPath: 'id', autoIncrement: true });
+          resStore.createIndex('sessionId', 'sessionId', { unique: false });
+        }
+      };
+      request.onsuccess = (e) => {
+        this.db = e.target.result;
+        resolve();
+      };
+      request.onerror = (e) => reject(e.target.error);
     });
   }
-}
 
-function recordFinisher(finisher) {
-  state.results.push(finisher);
-  state.results.sort((a, b) => a.elapsedSec - b.elapsedSec);
-  state.results.forEach((r, idx) => r.position = idx + 1);
-
-  // Update UI drawer
-  document.getElementById('finisher-count').textContent = state.results.length;
-  const list = document.getElementById('results-list');
-  list.innerHTML = "";
-  state.results.slice(-6).reverse().forEach(res => {
-    const div = document.createElement('div');
-    div.className = `result-row ${res.isUncertain ? 'uncertain' : ''}`;
-    div.innerHTML = `<span><strong>P${res.position}</strong> (T${res.trackId})</span><span>${res.formattedTime}</span>`;
-    list.appendChild(div);
-  });
-}
-
-// Touch Handling for Dragging the Finish Line
-function initTouchInteractions() {
-  const canvas = state.canvas;
-
-  function getCanvasCoords(touch) {
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    return {
-      x: (touch.clientX - rect.left) * scaleX,
-      y: (touch.clientY - rect.top) * scaleY
-    };
+  async saveSession(session) {
+    const tx = this.db.transaction('sessions', 'readwrite');
+    tx.objectStore('sessions').put(session);
+    return new Promise((res, rej) => {
+      tx.oncomplete = () => res();
+      tx.onerror = () => rej(tx.error);
+    });
   }
 
-  canvas.addEventListener('touchstart', (e) => {
-    if (e.touches.length !== 1) return;
-    const pt = getCanvasCoords(e.touches[0]);
-    const d1 = Math.hypot(pt.x - state.geometry.p1.x, pt.y - state.geometry.p1.y);
-    const d2 = Math.hypot(pt.x - state.geometry.p2.x, pt.y - state.geometry.p2.y);
+  async getActiveSession() {
+    const tx = this.db.transaction('sessions', 'readonly');
+    const store = tx.objectStore('sessions');
+    return new Promise((resolve) => {
+      const req = store.getAll();
+      req.onsuccess = () => {
+        const sessions = req.result;
+        if (!sessions || sessions.length === 0) resolve(null);
+        else resolve(sessions[sessions.length - 1]);
+      };
+    });
+  }
 
-    if (d1 < 36) {
-      state.selectedHandle = 'p1';
-    } else if (d2 < 36) {
-      state.selectedHandle = 'p2';
+  async saveResult(result) {
+    const tx = this.db.transaction('results', 'readwrite');
+    tx.objectStore('results').add(result);
+    return new Promise((res, rej) => {
+      tx.oncomplete = () => res();
+      tx.onerror = () => rej(tx.error);
+    });
+  }
+
+  async deleteResult(id) {
+    const tx = this.db.transaction('results', 'readwrite');
+    tx.objectStore('results').delete(id);
+    return new Promise((res, rej) => {
+      tx.oncomplete = () => res();
+      tx.onerror = () => rej(tx.error);
+    });
+  }
+
+  async getSessionResults(sessionId) {
+    const tx = this.db.transaction('results', 'readonly');
+    const index = tx.objectStore('results').index('sessionId');
+    return new Promise((resolve) => {
+      const req = index.getAll(sessionId);
+      req.onsuccess = () => resolve(req.result || []);
+    });
+  }
+
+  async clearAll() {
+    const tx = this.db.transaction(['sessions', 'results'], 'readwrite');
+    tx.objectStore('sessions').clear();
+    tx.objectStore('results').clear();
+    return new Promise((res) => { tx.oncomplete = () => res(); });
+  }
+}
+
+// ==========================================
+// 2. Geometry & Sub-Frame Timing Mathematics
+// ==========================================
+class TimingGeometry {
+  /**
+   * Computes 2D signed distance from point P(px, py) to line segment A(x1, y1) -> B(x2, y2).
+   * Sign indicates the side of the directed line.
+   */
+  static signedDistanceToLine(px, py, x1, y1, x2, y2) {
+    return (x2 - x1) * (py - y1) - (y2 - y1) * (px - x1);
+  }
+
+  /**
+   * Checks whether a path from P_prev to P_curr crosses line segment AB in the designated direction.
+   * direction: 'ltr' (Left-to-Right) or 'rtl' (Right-to-Left)
+   */
+  static evaluateCrossing(prevX, prevY, currX, currY, lineA, lineB, direction) {
+    const s1 = this.signedDistanceToLine(prevX, prevY, lineA.x, lineA.y, lineB.x, lineB.y);
+    const s2 = this.signedDistanceToLine(currX, currY, lineA.x, lineA.y, lineB.x, lineB.y);
+
+    let crossed = false;
+    if (direction === 'ltr') {
+      if (s1 < 0 && s2 >= 0) crossed = true;
     } else {
-      // Check proximity to whole line
-      const dLine = state.geometry.signedDistance(pt);
-      if (Math.abs(dLine) < 25) {
-        state.selectedHandle = 'line';
-        state.touchDragOffset = { x: pt.x, y: pt.y };
-      }
+      if (s1 > 0 && s2 <= 0) crossed = true;
     }
-  });
 
-  canvas.addEventListener('touchmove', (e) => {
-    if (!state.selectedHandle || e.touches.length !== 1) return;
-    e.preventDefault();
-    const pt = getCanvasCoords(e.touches[0]);
+    if (!crossed) return null;
 
-    if (state.selectedHandle === 'p1') {
-      state.geometry.p1 = pt;
-    } else if (state.selectedHandle === 'p2') {
-      state.geometry.p2 = pt;
-    } else if (state.selectedHandle === 'line') {
-      const dx = pt.x - state.touchDragOffset.x;
-      const dy = pt.y - state.touchDragOffset.y;
-      state.geometry.p1.x += dx;
-      state.geometry.p1.y += dy;
-      state.geometry.p2.x += dx;
-      state.geometry.p2.y += dy;
-      state.touchDragOffset = { x: pt.x, y: pt.y };
+    // Linear sub-frame interpolation factor alpha in [0, 1]
+    const denom = Math.abs(s1) + Math.abs(s2);
+    const alpha = denom === 0 ? 0.5 : Math.abs(s1) / denom;
+
+    const crossX = prevX + alpha * (currX - prevX);
+    const crossY = prevY + alpha * (currY - prevY);
+
+    // Bounding box segment check to ensure crossing occurred along the visible line segment
+    const minLineX = Math.min(lineA.x, lineB.x) - 0.05;
+    const maxLineX = Math.max(lineA.x, lineB.x) + 0.05;
+    const minLineY = Math.min(lineA.y, lineB.y) - 0.05;
+    const maxLineY = Math.max(lineA.y, lineB.y) + 0.05;
+
+    if (crossX < minLineX || crossX > maxLineX || crossY < minLineY || crossY > maxLineY) {
+      return null;
     }
-    state.geometry.updateNormals();
-  });
 
-  canvas.addEventListener('touchend', () => {
-    state.selectedHandle = null;
-  });
+    return { alpha, crossX, crossY };
+  }
 }
 
-// Render Loop
-async function mainLoop() {
-  const now = performance.now();
-
-  // FPS calculation
-  state.fpsCounter.count++;
-  if (now - state.fpsCounter.lastTick >= 1000) {
-    state.fpsCounter.value = state.fpsCounter.count;
-    state.fpsCounter.count = 0;
-    state.fpsCounter.lastTick = now;
-    document.getElementById('badge-fps').textContent = `FPS: ${state.fpsCounter.value}`;
+// ==========================================
+// 3. Multi-Person Tracker (MOT)
+// ==========================================
+class RunnerTrack {
+  constructor(id, pose, timestamp) {
+    this.id = id;
+    this.history = []; // { x, y, timestamp, keypointName, confidence }
+    this.status = 'active'; // 'active', 'crossed', 'cooldown'
+    this.framesUnseen = 0;
+    this.crossedTime = null;
+    this.lastCrossingAttempt = 0;
+    this.update(pose, timestamp);
   }
 
-  // Draw Camera Frame
-  state.ctx.drawImage(state.video, 0, 0, state.canvas.width, state.canvas.height);
+  update(pose, timestamp) {
+    this.framesUnseen = 0;
+    const anchor = this.extractBestAnchor(pose.keypoints);
+    this.history.push({
+      x: anchor.x,
+      y: anchor.y,
+      timestamp: timestamp,
+      keypointName: anchor.name,
+      confidence: anchor.score,
+      box: pose.box
+    });
+    if (this.history.length > 30) this.history.shift();
+  }
 
-  // If race is running, estimate pose and check crossing
-  if (state.isRaceRunning && state.detector) {
-    const elapsedSec = (now - state.raceStartMonoMs) / 1000.0;
-    document.getElementById('race-clock').textContent = formatTime(elapsedSec);
+  extractBestAnchor(keypoints) {
+    // Keypoint indices: 15=left_ankle, 16=right_ankle, 13=left_knee, 14=right_knee,
+    // 11=left_hip, 12=right_hip, 5=left_shoulder, 6=right_shoulder
+    const la = keypoints[15], ra = keypoints[16];
+    const lk = keypoints[13], rk = keypoints[14];
+    const lh = keypoints[11], rh = keypoints[12];
+    const ls = keypoints[5],  rs = keypoints[6];
 
-    const poses = await state.detector.estimatePoses(state.video, { maxPoses: 1, flipHorizontal: false });
-    if (poses.length > 0) {
-      const pt = extractTimingPoint(poses[0]);
-      if (pt) {
-        updateTracking(pt, now);
-        // Draw detected runner point
-        state.ctx.beginPath();
-        state.ctx.arc(pt.x, pt.y, 8, 0, 2 * Math.PI);
-        state.ctx.fillStyle = "#00ffcc";
-        state.ctx.fill();
+    // 1. Try Ankles
+    if (la && ra && (la.score > 0.3 || ra.score > 0.3)) {
+      const best = la.score > ra.score ? la : ra;
+      return { x: best.x, y: best.y, score: best.score, name: 'ankle' };
+    }
+    // 2. Fallback to Knees
+    if (lk && rk && (lk.score > 0.25 || rk.score > 0.25)) {
+      const best = lk.score > rk.score ? lk : rk;
+      return { x: best.x, y: best.y, score: best.score, name: 'knee_fallback' };
+    }
+    // 3. Fallback to Hips
+    if (lh && rh && (lh.score > 0.2 || rh.score > 0.2)) {
+      return { x: (lh.x + rh.x) / 2, y: (lh.y + rh.y) / 2, score: (lh.score + rh.score) / 2, name: 'hip_fallback' };
+    }
+    // 4. Fallback to Torso Midpoint
+    if (ls && rs && lh && rh) {
+      return {
+        x: (ls.x + rs.x + lh.x + rh.x) / 4,
+        y: (ls.y + rs.y + lh.y + rh.y) / 4,
+        score: (ls.score + rs.score) / 2,
+        name: 'torso_fallback'
+      };
+    }
+    return { x: 0.5, y: 0.5, score: 0.1, name: 'uncertain' };
+  }
+
+  predictPosition() {
+    if (this.history.length < 2) return this.currentPosition();
+    const p1 = this.history[this.history.length - 2];
+    const p2 = this.history[this.history.length - 1];
+    const dt = p2.timestamp - p1.timestamp;
+    if (dt <= 0) return { x: p2.x, y: p2.y };
+    const vx = (p2.x - p1.x) / dt;
+    const vy = (p2.y - p1.y) / dt;
+    const nowDt = performance.now() - p2.timestamp;
+    return { x: p2.x + vx * nowDt, y: p2.y + vy * nowDt };
+  }
+
+  currentPosition() {
+    return this.history[this.history.length - 1];
+  }
+}
+
+class MultiPersonTracker {
+  constructor() {
+    this.tracks = [];
+    this.nextTrackId = 1;
+    this.maxFramesUnseen = 15; // Track expiration
+  }
+
+  update(detectedPoses, timestamp) {
+    const assignedPoses = new Set();
+    const assignedTracks = new Set();
+
+    // Re-association based on Euclidean distance to predicted positions
+    for (const track of this.tracks) {
+      const pred = track.predictPosition();
+      let bestDist = Infinity;
+      let bestIdx = -1;
+
+      detectedPoses.forEach((pose, idx) => {
+        if (assignedPoses.has(idx)) return;
+        const anchor = track.extractBestAnchor(pose.keypoints);
+        const dist = Math.hypot(pred.x - anchor.x, pred.y - anchor.y);
+        // Distance threshold in normalized coordinate space (0.20 = 20% frame width/height)
+        if (dist < 0.20 && dist < bestDist) {
+          bestDist = dist;
+          bestIdx = idx;
+        }
+      });
+
+      if (bestIdx !== -1) {
+        track.update(detectedPoses[bestIdx], timestamp);
+        assignedPoses.add(bestIdx);
+        assignedTracks.add(track.id);
+      } else {
+        track.framesUnseen++;
+      }
+    }
+
+    // Spawn new tracks for unassigned poses
+    detectedPoses.forEach((pose, idx) => {
+      if (!assignedPoses.has(idx)) {
+        const newTrack = new RunnerTrack(this.nextTrackId++, pose, timestamp);
+        this.tracks.push(newTrack);
+      }
+    });
+
+    // Prune stale or expired tracks
+    this.tracks = this.tracks.filter(t => t.framesUnseen <= this.maxFramesUnseen);
+    return this.tracks;
+  }
+}
+
+// ==========================================
+// 4. Main Application Controller
+// ==========================================
+class AppController {
+  constructor() {
+    this.db = new RaceDatabase();
+    this.tracker = new MultiPersonTracker();
+    this.detector = null;
+
+    // Line endpoints stored in normalized coordinates [0.0 - 1.0]
+    this.line = {
+      p1: { x: 0.5, y: 0.05 },
+      p2: { x: 0.5, y: 0.95 }
+    };
+    this.direction = 'ltr'; // 'ltr' (Left-to-Right) or 'rtl' (Right-to-Left)
+
+    this.raceState = 'STOPPED'; // 'STOPPED', 'RUNNING'
+    this.raceStartTime = 0;
+    this.currentSessionId = null;
+    this.finishers = [];
+
+    // Hardware and Inference Performance Monitoring
+    this.perf = {
+      camFrames: 0,
+      renderFrames: 0,
+      infFrames: 0,
+      lastSec: performance.now(),
+      camFps: 0,
+      renderFps: 0,
+      infFps: 0,
+      isInferring: false,
+      lastFrameTime: performance.now()
+    };
+
+    this.wakeLock = null;
+    this.facingMode = 'environment';
+    this.videoElem = document.getElementById('webcam');
+    this.canvasElem = document.getElementById('overlay');
+    this.ctx = this.canvasElem.getContext('2d', { willReadFrequently: true });
+
+    // Touch & Pointer Interaction State
+    this.activePointerHandle = null;
+    this.touchThreshold = 38; // Screen px radius for draggable handles
+
+    this.init();
+  }
+
+  async init() {
+    this.setupUIListeners();
+    this.setupVisibilityListener();
+    await this.db.init();
+    await this.restorePreviousSession();
+    await this.initCamera();
+    await this.initDetector();
+    this.startRenderingLoop();
+  }
+
+  // --- Camera & Model Lifecycle ---
+  async initCamera() {
+    try {
+      if (this.videoElem.srcObject) {
+        this.videoElem.srcObject.getTracks().forEach(t => t.stop());
+      }
+      const constraints = {
+        audio: false,
+        video: {
+          facingMode: { ideal: this.facingMode },
+          width: { ideal: 1280, min: 640 },
+          height: { ideal: 720, min: 480 },
+          frameRate: { ideal: 60, min: 30 }
+        }
+      };
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      this.videoElem.srcObject = stream;
+      await new Promise(r => this.videoElem.onloadedmetadata = r);
+      await this.videoElem.play();
+      this.syncCanvasDimensions();
+
+      // Hook hardware capture timestamps if supported
+      if ('requestVideoFrameCallback' in this.videoElem) {
+        const onFrame = (now, metadata) => {
+          this.perf.camFrames++;
+          this.perf.lastFrameTime = metadata.captureTime || now;
+          if (this.videoElem && !this.videoElem.paused) {
+            this.videoElem.requestVideoFrameCallback(onFrame);
+          }
+        };
+        this.videoElem.requestVideoFrameCallback(onFrame);
+      }
+    } catch (err) {
+      this.showAlert('Camera Error', `Could not initialize camera: ${err.message}. Please verify camera permissions.`);
+    }
+  }
+
+  async initDetector() {
+    try {
+      document.getElementById('model-pill').textContent = 'Loading MoveNet...';
+      await tf.ready();
+      if (tf.getBackend() !== 'webgl') {
+        await tf.setBackend('webgl');
+      }
+      this.detector = await poseDetection.createDetector(
+        poseDetection.SupportedModels.MoveNet,
+        {
+          modelType: poseDetection.movenet.modelType.MULTIPOSE_LIGHTNING,
+          enableSmoothing: true,
+          minPoseScore: 0.25
+        }
+      );
+      document.getElementById('model-pill').textContent = 'MoveNet MultiPose Ready';
+      document.getElementById('model-pill').classList.add('active');
+    } catch (err) {
+      document.getElementById('model-pill').textContent = 'Model Failed';
+      document.getElementById('model-pill').classList.add('warning');
+      this.showAlert('AI Load Failure', 'Failed to load TensorFlow.js model weights. Offline cache might be missing.');
+    }
+  }
+
+  syncCanvasDimensions() {
+    const rect = this.videoElem.getBoundingClientRect();
+    this.canvasElem.width = this.videoElem.videoWidth || rect.width;
+    this.canvasElem.height = this.videoElem.videoHeight || rect.height;
+  }
+
+  setupVisibilityListener() {
+    document.addEventListener('visibilitychange', async () => {
+      if (document.visibilityState === 'visible') {
+        if (this.raceState === 'RUNNING') {
+          await this.acquireWakeLock();
+          // Warn if race resumed after backgrounding
+          const elapsedGap = performance.now() - this.perf.lastFrameTime;
+          if (elapsedGap > 1000) {
+            console.warn(`Timing gap of ${Math.round(elapsedGap)}ms detected while app was suspended`);
+          }
+        }
+      }
+    });
+  }
+
+  async acquireWakeLock() {
+    try {
+      if ('wakeLock' in navigator) {
+        this.wakeLock = await navigator.wakeLock.request('screen');
+      }
+    } catch (_) {}
+  }
+
+  releaseWakeLock() {
+    if (this.wakeLock) {
+      this.wakeLock.release().catch(() => {});
+      this.wakeLock = null;
+    }
+  }
+
+  // --- Main Loops (Render & Inference) ---
+  startRenderingLoop() {
+    const loop = (now) => {
+      this.perf.renderFrames++;
+      this.updateFPS(now);
+      this.syncCanvasDimensions();
+
+      // Trigger asynchronous pose inference without blocking render loop
+      if (this.detector && !this.perf.isInferring && this.videoElem.readyState >= 2) {
+        this.runInference(now);
+      }
+
+      this.renderOverlay();
+      this.updateClockHUD(now);
+      requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
+  }
+
+  async runInference(timestamp) {
+    this.perf.isInferring = true;
+    try {
+      const poses = await this.detector.estimatePoses(this.videoElem, { maxPoses: 6 });
+      this.perf.infFrames++;
+
+      // Normalize keypoints from video pixels to [0, 1] range
+      const vw = this.videoElem.videoWidth || 1;
+      const vh = this.videoElem.videoHeight || 1;
+      const normalizedPoses = poses.map(p => ({
+        box: p.box,
+        score: p.score,
+        keypoints: p.keypoints.map(kp => ({
+          x: kp.x / vw,
+          y: kp.y / vh,
+          score: kp.score,
+          name: kp.name
+        }))
+      }));
+
+      const activeTracks = this.tracker.update(normalizedPoses, timestamp);
+      document.getElementById('active-tracks').textContent = `Tracks: ${activeTracks.length}`;
+
+      if (this.raceState === 'RUNNING') {
+        this.checkCrossings(activeTracks, timestamp);
+      }
+    } catch (e) {
+      console.warn('Inference error:', e);
+    } finally {
+      this.perf.isInferring = false;
+    }
+  }
+
+  checkCrossings(tracks, currentTimestamp) {
+    for (const track of tracks) {
+      if (track.status !== 'active' || track.history.length < 2) continue;
+
+      const pPrev = track.history[track.history.length - 2];
+      const pCurr = track.history[track.history.length - 1];
+
+      const crossing = TimingGeometry.evaluateCrossing(
+        pPrev.x, pPrev.y,
+        pCurr.x, pCurr.y,
+        this.line.p1, this.line.p2,
+        this.direction
+      );
+
+      if (crossing) {
+        // Prevent duplicate trigger for same runner (cooldown: 5 seconds)
+        if (currentTimestamp - track.lastCrossingAttempt < 5000) continue;
+        track.lastCrossingAttempt = currentTimestamp;
+        track.status = 'crossed';
+
+        // Calculate sub-frame interpolated hardware finish time
+        const dt = pCurr.timestamp - pPrev.timestamp;
+        const exactCrossingTimestamp = pPrev.timestamp + (crossing.alpha * dt);
+        const elapsedRaceMs = Math.max(0, exactCrossingTimestamp - this.raceStartTime);
+
+        this.recordFinisher({
+          trackId: track.id,
+          elapsedMs: elapsedRaceMs,
+          crossingTime: exactCrossingTimestamp,
+          keypoint: pCurr.keypointName,
+          confidence: pCurr.confidence,
+          alpha: crossing.alpha,
+          crossPos: { x: crossing.crossX, y: crossing.crossY }
+        });
       }
     }
   }
 
-  // Draw Finish Line Overlays
-  renderFinishLineOverlays();
+  async recordFinisher(data) {
+    const position = this.finishers.length + 1;
+    const formatted = this.formatTime(data.elapsedMs);
 
-  requestAnimationFrame(mainLoop);
-}
+    // Capture visual snapshot evidence
+    const snapshotUrl = this.captureCrossingSnapshot(data.crossPos);
 
-function renderFinishLineOverlays() {
-  const ctx = state.ctx;
-  const geom = state.geometry;
+    const flags = [];
+    if (data.confidence < 0.4) flags.push('LOW_CONF');
+    if (data.keypoint.includes('fallback')) flags.push(data.keypoint.toUpperCase());
+    if (this.finishers.length > 0) {
+      const prev = this.finishers[this.finishers.length - 1];
+      if (data.elapsedMs - prev.elapsedMs < 250) flags.push('PACK_FINISH');
+    }
 
-  // Line
-  ctx.beginPath();
-  ctx.moveTo(geom.p1.x, geom.p1.y);
-  ctx.lineTo(geom.p2.x, geom.p2.y);
-  ctx.lineWidth = 4;
-  ctx.strokeStyle = "#ff0055";
-  ctx.stroke();
+    const finisherRecord = {
+      sessionId: this.currentSessionId,
+      position: position,
+      elapsedMs: Math.round(data.elapsedMs),
+      formattedTime: formatted,
+      keypointUsed: data.keypoint,
+      confidence: Number(data.confidence.toFixed(2)),
+      subframeAlpha: Number(data.alpha.toFixed(3)),
+      flags: flags,
+      snapshot: snapshotUrl,
+      recordedAt: new Date().toISOString()
+    };
 
-  // Handles
-  [geom.p1, geom.p2].forEach(p => {
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, 14, 0, 2 * Math.PI);
-    ctx.fillStyle = "#ffcc00";
-    ctx.fill();
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = "#fff";
-    ctx.stroke();
-  });
+    this.finishers.push(finisherRecord);
+    await this.db.saveResult(finisherRecord);
+    this.renderResultsList();
+  }
 
-  // Direction indicator arrow
-  const mx = (geom.p1.x + geom.p2.x) / 2;
-  const my = (geom.p1.y + geom.p2.y) / 2;
-  const sign = geom.directionSign < 0 ? -1 : 1;
-  const arrowLen = 45;
-  const endX = mx + sign * arrowLen * geom.nx;
-  const endY = my + sign * arrowLen * geom.ny;
+  captureCrossingSnapshot(crossPos) {
+    try {
+      const snapCanvas = document.createElement('canvas');
+      snapCanvas.width = 320;
+      snapCanvas.height = 320;
+      const sCtx = snapCanvas.getContext('2d');
 
-  ctx.beginPath();
-  ctx.moveTo(mx, my);
-  ctx.lineTo(endX, endY);
-  ctx.lineWidth = 3;
-  ctx.strokeStyle = "#00ff66";
-  ctx.stroke();
-}
+      const vw = this.videoElem.videoWidth || 640;
+      const vh = this.videoElem.videoHeight || 480;
 
-// UI Buttons and Event Listeners
-function setupUIListeners() {
-  const btnStart = document.getElementById('btn-start');
-  const btnStop = document.getElementById('btn-stop');
-  const btnDir = document.getElementById('btn-dir');
-  const btnReset = document.getElementById('btn-reset-line');
-  const btnExport = document.getElementById('btn-export-parkrun');
-  const btnFlip = document.getElementById('btn-toggle-cam');
-  const badgeState = document.getElementById('badge-state');
-  const badgeDir = document.getElementById('badge-dir');
+      // Crop around crossing coordinate
+      const cropW = vw * 0.4;
+      const cropH = vh * 0.4;
+      const cropX = Math.max(0, Math.min(vw - cropW, (crossPos.x * vw) - (cropW / 2)));
+      const cropY = Math.max(0, Math.min(vh - cropH, (crossPos.y * vh) - (cropH / 2)));
 
-  btnStart.addEventListener('click', () => {
-    state.isRaceRunning = true;
-    state.raceStartMonoMs = performance.now();
-    state.tracks.clear();
-    state.results = [];
-    document.getElementById('results-list').innerHTML = "";
-    document.getElementById('finisher-count').textContent = "0";
+      sCtx.drawImage(this.videoElem, cropX, cropY, cropW, cropH, 0, 0, 320, 320);
+      return snapCanvas.toDataURL('image/jpeg', 0.8);
+    } catch (_) {
+      return '';
+    }
+  }
 
-    badgeState.textContent = "RUNNING";
-    badgeState.className = "badge running";
-    btnStart.disabled = true;
-    btnStop.disabled = false;
-    acquireWakeLock();
-  });
+  // --- Rendering UI & Finish Line ---
+  renderOverlay() {
+    const w = this.canvasElem.width;
+    const h = this.canvasElem.height;
+    this.ctx.clearRect(0, 0, w, h);
 
-  btnStop.addEventListener('click', () => {
-    state.isRaceRunning = false;
-    badgeState.textContent = "STOPPED";
-    badgeState.className = "badge stopped";
-    btnStart.disabled = false;
-    btnStop.disabled = true;
-    if (state.wakeLock) state.wakeLock.release();
-  });
+    // 1. Draw Active Tracks & Skeletons
+    for (const track of this.tracker.tracks) {
+      const pos = track.currentPosition();
+      const sx = pos.x * w;
+      const sy = pos.y * h;
 
-  btnDir.addEventListener('click', () => {
-    state.geometry.directionSign = state.geometry.directionSign === -1 ? 1 : (state.geometry.directionSign === 1 ? 0 : -1);
-    badgeDir.textContent = state.geometry.directionSign === -1 ? "DIR: L → R" : (state.geometry.directionSign === 1 ? "DIR: R → L" : "DIR: EITHER");
-  });
+      this.ctx.beginPath();
+      this.ctx.arc(sx, sy, 8, 0, 2 * Math.PI);
+      this.ctx.fillStyle = track.status === 'crossed' ? '#da3633' : '#38ef7d';
+      this.ctx.fill();
 
-  btnReset.addEventListener('click', () => {
-    state.geometry = new FinishLineGeometry(state.canvas.width, state.canvas.height);
-  });
+      this.ctx.fillStyle = '#ffffff';
+      this.ctx.font = 'bold 12px monospace';
+      this.ctx.fillText(`ID:${track.id}`, sx + 10, sy - 10);
+    }
 
-  btnFlip.addEventListener('click', async () => {
-    state.facingMode = state.facingMode === "environment" ? "user" : "environment";
-    await setupCamera();
-  });
+    // 2. Draw Finish Line
+    const p1x = this.line.p1.x * w;
+    const p1y = this.line.p1.y * h;
+    const p2x = this.line.p2.x * w;
+    const p2y = this.line.p2.y * h;
 
-  btnExport.addEventListener('click', () => {
-    if (state.results.length === 0) {
-      alert("No finish results recorded yet.");
+    this.ctx.beginPath();
+    this.ctx.moveTo(p1x, p1y);
+    this.ctx.lineTo(p2x, p2y);
+    this.ctx.strokeStyle = '#2ea043';
+    this.ctx.lineWidth = 4;
+    this.ctx.setLineDash([8, 4]);
+    this.ctx.stroke();
+    this.ctx.setLineDash([]);
+
+    // 3. Draw Touch Handles
+    this.drawHandle(p1x, p1y, 'START');
+    this.drawHandle(p2x, p2y, 'END');
+  }
+
+  drawHandle(x, y, label) {
+    this.ctx.beginPath();
+    this.ctx.arc(x, y, 16, 0, 2 * Math.PI);
+    this.ctx.fillStyle = 'rgba(46, 160, 67, 0.4)';
+    this.ctx.fill();
+    this.ctx.beginPath();
+    this.ctx.arc(x, y, 8, 0, 2 * Math.PI);
+    this.ctx.fillStyle = '#ffffff';
+    this.ctx.fill();
+  }
+
+  // --- Touch & Pointer Interactions for Line Placement ---
+  setupUIListeners() {
+    const overlay = this.canvasElem;
+
+    const getEventPos = (e) => {
+      const rect = overlay.getBoundingClientRect();
+      const clientX = e.clientX || (e.touches && e.touches[0].clientX);
+      const clientY = e.clientY || (e.touches && e.touches[0].clientY);
+      return {
+        x: (clientX - rect.left) / rect.width,
+        y: (clientY - rect.top) / rect.height
+      };
+    };
+
+    overlay.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      const pos = getEventPos(e);
+      const w = overlay.width;
+      const h = overlay.height;
+
+      const d1 = Math.hypot((pos.x - this.line.p1.x) * w, (pos.y - this.line.p1.y) * h);
+      const d2 = Math.hypot((pos.x - this.line.p2.x) * w, (pos.y - this.line.p2.y) * h);
+
+      if (d1 < this.touchThreshold) {
+        this.activePointerHandle = 'p1';
+        overlay.setPointerCapture(e.pointerId);
+      } else if (d2 < this.touchThreshold) {
+        this.activePointerHandle = 'p2';
+        overlay.setPointerCapture(e.pointerId);
+      }
+    });
+
+    overlay.addEventListener('pointermove', (e) => {
+      if (!this.activePointerHandle) return;
+      e.preventDefault();
+      const pos = getEventPos(e);
+      const clampedX = Math.max(0.01, Math.min(0.99, pos.x));
+      const clampedY = Math.max(0.01, Math.min(0.99, pos.y));
+
+      if (this.activePointerHandle === 'p1') {
+        this.line.p1 = { x: clampedX, y: clampedY };
+      } else if (this.activePointerHandle === 'p2') {
+        this.line.p2 = { x: clampedX, y: clampedY };
+      }
+    });
+
+    const endPointer = (e) => {
+      if (this.activePointerHandle) {
+        try { overlay.releasePointerCapture(e.pointerId); } catch (_) {}
+        this.activePointerHandle = null;
+      }
+    };
+    overlay.addEventListener('pointerup', endPointer);
+    overlay.addEventListener('pointercancel', endPointer);
+
+    // Button Controls
+    document.getElementById('btn-start').onclick = () => this.startRace();
+    document.getElementById('btn-stop').onclick = () => this.stopRace();
+    document.getElementById('btn-dir').onclick = () => this.toggleDirection();
+    document.getElementById('btn-reset-line').onclick = () => this.resetLineCoordinates();
+    document.getElementById('btn-flip-cam').onclick = () => this.flipCamera();
+    document.getElementById('btn-export').onclick = () => this.showExportModal();
+    document.getElementById('btn-new-race').onclick = () => this.startNewSessionWithPrompt();
+    document.getElementById('btn-clear-results').onclick = () => this.clearAllResultsPrompt();
+
+    // Export Modal Actions
+    document.getElementById('btn-export-parkrun').onclick = () => this.exportCSV('parkrun_std');
+    document.getElementById('btn-export-parkrun-barcode').onclick = () => this.exportCSV('parkrun_barcode');
+    document.getElementById('btn-export-audit').onclick = () => this.exportCSV('audit');
+    document.getElementById('btn-export-cancel').onclick = () => this.hideExportModal();
+
+    // Review Modal Close
+    document.getElementById('btn-modal-close').onclick = () => {
+      document.getElementById('review-modal').classList.add('hidden');
+    };
+    document.getElementById('btn-alert-dismiss').onclick = () => {
+      document.getElementById('alert-modal').classList.add('hidden');
+    };
+  }
+
+  resetLineCoordinates() {
+    this.line = {
+      p1: { x: 0.5, y: 0.05 },
+      p2: { x: 0.5, y: 0.95 }
+    };
+  }
+
+  toggleDirection() {
+    this.direction = this.direction === 'ltr' ? 'rtl' : 'ltr';
+    document.getElementById('dir-pill').textContent =
+      `DIR: ${this.direction === 'ltr' ? 'L → R' : 'R → L'}`;
+  }
+
+  async flipCamera() {
+    this.facingMode = this.facingMode === 'environment' ? 'user' : 'environment';
+    await this.initCamera();
+  }
+
+  // --- Race Timing Operations ---
+  async startRace() {
+    if (this.raceState === 'RUNNING') return;
+    this.raceState = 'RUNNING';
+    this.raceStartTime = performance.now();
+    await this.acquireWakeLock();
+
+    document.getElementById('status-pill').textContent = 'RUNNING';
+    document.getElementById('status-pill').classList.add('active');
+    document.getElementById('btn-start').disabled = true;
+    document.getElementById('btn-stop').disabled = false;
+
+    if (!this.currentSessionId) {
+      this.currentSessionId = 'race_' + Date.now();
+      await this.db.saveSession({
+        id: this.currentSessionId,
+        date: new Date().toISOString(),
+        direction: this.direction
+      });
+    }
+  }
+
+  stopRace() {
+    if (this.raceState === 'STOPPED') return;
+    this.raceState = 'STOPPED';
+    this.releaseWakeLock();
+
+    document.getElementById('status-pill').textContent = 'STOPPED';
+    document.getElementById('status-pill').classList.remove('active');
+    document.getElementById('btn-start').disabled = false;
+    document.getElementById('btn-stop').disabled = true;
+  }
+
+  async startNewSessionWithPrompt() {
+    if (this.finishers.length > 0 && !confirm('Start a new race? Current results are safely archived in IndexedDB.')) {
       return;
     }
-    // Parkrun standard CSV format: Position,Time
-    let csv = "Position,Time\n";
-    state.results.forEach(r => {
-      csv += `${r.position},${r.formattedTime}\n`;
+    this.stopRace();
+    this.finishers = [];
+    this.currentSessionId = 'race_' + Date.now();
+    await this.db.saveSession({
+      id: this.currentSessionId,
+      date: new Date().toISOString(),
+      direction: this.direction
     });
+    this.renderResultsList();
+    document.getElementById('clock-display').textContent = '00:00.000';
+  }
 
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  async clearAllResultsPrompt() {
+    if (!confirm('Permanently delete all stored races and history? This cannot be undone.')) return;
+    this.stopRace();
+    this.finishers = [];
+    await this.db.clearAll();
+    this.currentSessionId = null;
+    this.renderResultsList();
+    document.getElementById('clock-display').textContent = '00:00.000';
+  }
+
+  async restorePreviousSession() {
+    const activeSess = await this.db.getActiveSession();
+    if (activeSess) {
+      this.currentSessionId = activeSess.id;
+      this.direction = activeSess.direction || 'ltr';
+      document.getElementById('dir-pill').textContent =
+        `DIR: ${this.direction === 'ltr' ? 'L → R' : 'R → L'}`;
+      this.finishers = await this.db.getSessionResults(this.currentSessionId);
+      this.renderResultsList();
+    }
+  }
+
+  // --- Display, Formatting & Review Modal ---
+  updateClockHUD(now) {
+    if (this.raceState === 'RUNNING') {
+      const elapsed = now - this.raceStartTime;
+      document.getElementById('clock-display').textContent = this.formatTime(elapsed);
+    }
+  }
+
+  updateFPS(now) {
+    if (now - this.perf.lastSec >= 1000) {
+      this.perf.renderFps = this.perf.renderFrames;
+      this.perf.camFps = this.perf.camFrames;
+      this.perf.infFps = this.perf.infFrames;
+
+      this.perf.renderFrames = 0;
+      this.perf.camFrames = 0;
+      this.perf.infFrames = 0;
+      this.perf.lastSec = now;
+
+      document.getElementById('fps-render').textContent = `Render: ${this.perf.renderFps} fps`;
+      document.getElementById('fps-cam').textContent = `Camera: ${this.perf.camFps} fps`;
+      document.getElementById('fps-inf').textContent = `Inference: ${this.perf.infFps} fps`;
+    }
+  }
+
+  formatTime(ms) {
+    const totalSec = Math.floor(ms / 1000);
+    const m = Math.floor(totalSec / 60);
+    const s = totalSec % 60;
+    const millis = Math.floor(ms % 1000);
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(millis).padStart(3, '0')}`;
+  }
+
+  formatParkrunTime(ms) {
+    const totalSec = Math.floor(ms / 1000);
+    const h = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    const s = totalSec % 60;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  }
+
+  renderResultsList() {
+    const listElem = document.getElementById('results-list');
+    listElem.innerHTML = '';
+    document.getElementById('finisher-count').textContent = this.finishers.length;
+
+    // Display most recent finishers at the top
+    const sorted = [...this.finishers].reverse();
+
+    sorted.forEach((finisher) => {
+      const li = document.createElement('li');
+      li.className = `result-card ${finisher.flags.length > 0 ? 'flagged' : ''}`;
+      li.onclick = () => this.showReviewModal(finisher);
+
+      li.innerHTML = `
+        <div class="result-pos">#${finisher.position}</div>
+        <div class="result-meta">
+          <div class="result-time">${finisher.formattedTime}</div>
+          <div class="result-tags">
+            <span class="tag">${finisher.keypointUsed}</span>
+            <span class="tag">conf: ${finisher.confidence}</span>
+            ${finisher.flags.map(f => `<span class="tag warning">${f}</span>`).join('')}
+          </div>
+        </div>
+        ${finisher.snapshot ? `<img class="result-thumb" src="${finisher.snapshot}" alt="Evidence">` : ''}
+      `;
+      listElem.appendChild(li);
+    });
+  }
+
+  showReviewModal(finisher) {
+    const modal = document.getElementById('review-modal');
+    document.getElementById('modal-title').textContent = `Finisher #${finisher.position} Review`;
+    document.getElementById('modal-snapshot').src = finisher.snapshot || '';
+    document.getElementById('modal-details').innerHTML = `
+      <strong>Elapsed Time:</strong> ${finisher.formattedTime} (${finisher.elapsedMs} ms)<br>
+      <strong>Sub-Frame Alpha:</strong> ${finisher.subframeAlpha}<br>
+      <strong>Tracking Keypoint:</strong> ${finisher.keypointUsed} (Score: ${finisher.confidence})<br>
+      <strong>Recorded At:</strong> ${finisher.recordedAt}<br>
+      <strong>Status Flags:</strong> ${finisher.flags.join(', ') || 'NONE (Accurate)'}
+    `;
+
+    document.getElementById('btn-modal-discard').onclick = async () => {
+      if (confirm(`Remove finisher #${finisher.position}?`)) {
+        this.finishers = this.finishers.filter(f => f.position !== finisher.position);
+        // Re-index remaining finishers
+        this.finishers.forEach((f, idx) => f.position = idx + 1);
+        if (finisher.id) await this.db.deleteResult(finisher.id);
+        this.renderResultsList();
+        modal.classList.add('hidden');
+      }
+    };
+    modal.classList.remove('hidden');
+  }
+
+  // --- CSV Export Engine ---
+  showExportModal() {
+    if (this.finishers.length === 0) {
+      this.showAlert('Export CSV', 'No finishers have crossed the line yet.');
+      return;
+    }
+    document.getElementById('export-modal').classList.remove('hidden');
+  }
+
+  hideExportModal() {
+    document.getElementById('export-modal').classList.add('hidden');
+  }
+
+  async exportCSV(mode) {
+    this.hideExportModal();
+    let csvContent = '';
+    const dateStr = new Date().toISOString().split('T')[0];
+
+    if (mode === 'parkrun_std') {
+      csvContent = 'Position,Time\n';
+      this.finishers.forEach(f => {
+        csvContent += `${f.position},${this.formatParkrunTime(f.elapsedMs)}\n`;
+      });
+    } else if (mode === 'parkrun_barcode') {
+      csvContent = 'Position,Time,Barcode\n';
+      this.finishers.forEach(f => {
+        csvContent += `${f.position},${this.formatParkrunTime(f.elapsedMs)},\n`;
+      });
+    } else {
+      csvContent = 'Position,Time,Elapsed_Ms,Keypoint,Confidence,Alpha,Flags,Recorded_At\n';
+      this.finishers.forEach(f => {
+        csvContent += `${f.position},${f.formattedTime},${f.elapsedMs},${f.keypointUsed},${f.confidence},${f.subframeAlpha},"${f.flags.join(';')}",${f.recordedAt}\n`;
+      });
+    }
+
+    const filename = `race_results_${dateStr}_${mode}.csv`;
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+
+    // Use Web Share API if supported on mobile
+    if (navigator.share && navigator.canShare && navigator.canShare({ files: [new File([blob], filename, { type: 'text/csv' })] })) {
+      try {
+        await navigator.share({
+          files: [new File([blob], filename, { type: 'text/csv' })],
+          title: 'Race Results CSV',
+          text: `Exported race results: ${this.finishers.length} finishers.`
+        });
+        return;
+      } catch (_) {}
+    }
+
+    // Fallback Blob URL Download with delayed revocation for iOS Safari
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
+    const a = document.createElement('a');
     a.href = url;
-    a.download = `parkrun_results_${new Date().toISOString().slice(0,10)}.csv`;
+    a.download = filename;
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 60000);
+  }
+
+  showAlert(title, message) {
+    document.getElementById('alert-title').textContent = title;
+    document.getElementById('alert-message').textContent = message;
+    document.getElementById('alert-modal').classList.remove('hidden');
+  }
+}
+
+// Register PWA Service Worker
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(err => console.warn('SW registration failed:', err));
   });
 }
 
-// Bootstrap
-window.addEventListener('DOMContentLoaded', async () => {
-  await setupCamera();
-  initTouchInteractions();
-  setupUIListeners();
-  await initDetector();
-  requestAnimationFrame(mainLoop);
+// Instantiate on DOM load
+window.addEventListener('DOMContentLoaded', () => {
+  window.raceApp = new AppController();
 });
