@@ -284,14 +284,36 @@ class RaceStorage {
   }
 
   async clearSessionResults(sessionId) {
-    if (!this.db || !sessionId) return;
-    const items = await this.getSessionFinishers(sessionId);
+    if (!this.db) throw new Error('Race storage is not initialized.');
+    if (!sessionId) return;
+
+    // Delete through the session index in ONE read/write transaction.
+    // Avoid getAll() followed by a second transaction, which can race with
+    // a finisher being saved at the same time the user presses Clear.
     return new Promise((resolve, reject) => {
-      const tx = this.db.transaction('results', 'readwrite');
-      const store = tx.objectStore('results');
-      items.forEach(i => store.delete(i.id));
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
+      let tx;
+      try {
+        tx = this.db.transaction('results', 'readwrite');
+        const store = tx.objectStore('results');
+        const index = store.index('sessionId');
+        const request = index.openKeyCursor(IDBKeyRange.only(sessionId));
+
+        request.onsuccess = () => {
+          const cursor = request.result;
+          if (!cursor) return;
+          store.delete(cursor.primaryKey);
+          cursor.continue();
+        };
+        request.onerror = () => reject(request.error || new Error('Could not find session results.'));
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error || new Error('Could not clear session results.'));
+        tx.onabort = () => reject(tx.error || new Error('Clearing session results was cancelled.'));
+      } catch (error) {
+        if (tx) {
+          try { tx.abort(); } catch (_) {}
+        }
+        reject(error);
+      }
     });
   }
 }
@@ -792,10 +814,25 @@ class RaceTimerApp {
 
   async clearSessionPrompt() {
     if (!this.finishers.length) return;
-    if (confirm('Clear current race finishers?')) {
+    if (!confirm('Clear current race finishers?')) return;
+
+    const clearButton = document.getElementById('btn-clear-results');
+    if (clearButton) clearButton.disabled = true;
+
+    try {
+      // Clear persisted rows first so a storage error does not silently
+      // leave the screen and database showing different results.
       await this.db.clearSessionResults(this.currentSessionId);
       this.finishers = [];
       this.renderFinishersList();
+    } catch (error) {
+      console.error('Failed to clear current race finishers:', error);
+      this.showAlert(
+        'Could Not Clear Results',
+        'The saved results could not be cleared. Please try again. Your current results have been kept.'
+      );
+    } finally {
+      if (clearButton) clearButton.disabled = false;
     }
   }
 
