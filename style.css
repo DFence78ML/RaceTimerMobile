@@ -1,15 +1,10 @@
-/* AI Finish Line Mobile - Fullscreen Viewport & Layered Overlays */
+/* AI Finish Line Mobile - Ultra-Fast Mobile Stylesheet */
 :root {
-  --bg-dark: #0a0e14;
-  --surface-glass: rgba(22, 27, 34, 0.78);
-  --surface-border: rgba(255, 255, 255, 0.18);
-  --text-main: #f0f6fc;
-  --text-muted: #8b949e;
+  --bg-dark: #000;
+  --surface-glass: rgba(18, 22, 28, 0.82);
+  --surface-border: rgba(255, 255, 255, 0.15);
   --accent-green: #2ea043;
-  --accent-green-hover: #3fb950;
   --accent-red: #da3633;
-  --accent-yellow: #d29922;
-  --accent-blue: #58a6ff;
   --safe-top: env(safe-area-inset-top, 8px);
   --safe-bottom: env(safe-area-inset-bottom, 8px);
   --safe-left: env(safe-area-inset-left, 8px);
@@ -24,13 +19,12 @@ html, body {
   height: 100dvh;
   overflow: hidden;
   background-color: #000;
-  color: var(--text-main);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
   user-select: none;
 }
 
-/* Fullscreen Edge-to-Edge Camera Viewport */
-.fullscreen-camera-wrap {
+.fullscreen-camera {
   position: fixed;
   inset: 0;
   width: 100vw;
@@ -61,7 +55,6 @@ canvas#overlay {
   touch-action: none;
 }
 
-/* Top Left: Clock & Telemetry HUD */
 .top-left-hud {
   position: fixed;
   top: var(--safe-top);
@@ -69,76 +62,70 @@ canvas#overlay {
   z-index: 10;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
   pointer-events: none;
 }
 
 .clock-card {
   background: var(--surface-glass);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  padding: 4px 12px;
-  border-radius: 8px;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  padding: 3px 10px;
+  border-radius: 6px;
   border: 1px solid var(--surface-border);
   display: inline-block;
 }
 
 .clock-display {
-  font-family: "SF Mono", Monaco, Consolas, monospace;
-  font-size: 1.5rem;
+  font-family: monospace;
+  font-size: 1.4rem;
   font-weight: 800;
   color: #fff;
-  letter-spacing: 0.04em;
 }
 
 .telemetry-pills {
   display: flex;
-  flex-wrap: wrap;
   gap: 4px;
-  font-size: 0.68rem;
+  font-size: 0.65rem;
   font-family: monospace;
 }
 
 .pill {
   padding: 2px 6px;
-  border-radius: 10px;
-  background: rgba(13, 17, 23, 0.85);
+  border-radius: 8px;
+  background: rgba(10, 14, 20, 0.85);
   border: 1px solid var(--surface-border);
-  backdrop-filter: blur(4px);
 }
 .pill.active { border-color: var(--accent-green); color: var(--accent-green); }
-.pill.warning { border-color: var(--accent-yellow); color: var(--accent-yellow); }
 
-/* Top Right: Layered Finishers Section (Position & Time Only) */
 .finishers-overlay {
   position: fixed;
   top: var(--safe-top);
   right: var(--safe-right);
-  width: 154px;
-  max-height: 48vh;
+  width: 140px;
+  max-height: 46vh;
   z-index: 10;
   background: var(--surface-glass);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   border: 1px solid var(--surface-border);
-  border-radius: 10px;
+  border-radius: 8px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
 }
 
 .finishers-overlay-header {
-  padding: 6px 10px;
-  background: rgba(0, 0, 0, 0.3);
+  padding: 5px 8px;
+  background: rgba(0, 0, 0, 0.4);
   border-bottom: 1px solid var(--surface-border);
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   font-weight: 700;
-  color: var(--text-muted);
-  text-transform: uppercase;
+  color: #8b949e;
   letter-spacing: 0.05em;
 }
 
@@ -146,10 +133,9 @@ canvas#overlay {
   background: none;
   border: none;
   color: var(--accent-red);
-  font-size: 0.68rem;
+  font-size: 0.65rem;
   font-weight: 600;
   cursor: pointer;
-  padding: 2px 4px;
 }
 
 .finishers-compact-list {
@@ -165,46 +151,30 @@ canvas#overlay {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 6px 10px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 5px 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
   cursor: pointer;
-  font-family: "SF Mono", Monaco, Consolas, monospace;
-  transition: background 0.15s;
+  font-family: monospace;
 }
-.finisher-compact-row:active {
-  background: rgba(255, 255, 255, 0.15);
-}
-.finisher-compact-row:last-child {
-  border-bottom: none;
-}
+.finisher-compact-row:active { background: rgba(255, 255, 255, 0.2); }
+.finisher-compact-row:last-child { border-bottom: none; }
 
-.finisher-compact-pos {
-  font-size: 0.88rem;
-  font-weight: 800;
-  color: var(--accent-green);
-}
+.finisher-compact-pos { font-size: 0.85rem; font-weight: 800; color: var(--accent-green); }
+.finisher-compact-time { font-size: 0.82rem; font-weight: 600; color: #fff; }
 
-.finisher-compact-time {
-  font-size: 0.84rem;
-  font-weight: 600;
-  color: #fff;
-}
-
-/* Small Floating UI Control Buttons at the Bottom */
 .bottom-dock {
   position: fixed;
   bottom: 0;
   left: 0;
   right: 0;
   z-index: 20;
-  padding-top: 8px;
-  padding-bottom: max(8px, var(--safe-bottom));
-  padding-left: max(8px, var(--safe-left));
-  padding-right: max(8px, var(--safe-right));
-  background: linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 75%, transparent 100%);
+  padding-top: 6px;
+  padding-bottom: max(6px, var(--safe-bottom));
+  padding-left: max(6px, var(--safe-left));
+  padding-right: max(6px, var(--safe-right));
+  background: linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.3) 70%, transparent 100%);
   display: flex;
   justify-content: center;
-  align-items: center;
   pointer-events: none;
 }
 
@@ -212,57 +182,51 @@ canvas#overlay {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 6px;
-  max-width: 600px;
+  gap: 5px;
+  max-width: 520px;
   width: 100%;
   pointer-events: auto;
 }
 
 button.btn-small {
   background: var(--surface-glass);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  color: var(--text-main);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  color: #fff;
   border: 1px solid var(--surface-border);
   border-radius: 6px;
-  padding: 7px 10px;
+  padding: 6px 9px;
   font-size: 0.72rem;
   font-weight: 700;
   cursor: pointer;
-  min-height: 36px;
+  min-height: 34px;
   touch-action: manipulation;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
   white-space: nowrap;
 }
 button.btn-small:active { transform: scale(0.96); }
-button.btn-small.btn-primary { background: var(--accent-green); border-color: var(--accent-green-hover); color: #fff; }
-button.btn-small.btn-danger { background: var(--accent-red); border-color: #f85149; color: #fff; }
+button.btn-small.btn-primary { background: var(--accent-green); border-color: #3fb950; }
+button.btn-small.btn-danger { background: var(--accent-red); border-color: #f85149; }
 
-/* Modals */
 .modal-overlay {
   position: fixed; inset: 0;
   background: rgba(0, 0, 0, 0.75);
   display: flex; align-items: center; justify-content: center;
-  z-index: 999; padding: 16px;
+  z-index: 999; padding: 14px;
   backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
 }
 .modal-content {
   background: #161b22;
   border: 1px solid var(--surface-border);
-  border-radius: 12px;
-  width: 100%; max-width: 440px; max-height: 90vh;
-  overflow-y: auto; padding: 18px;
-  display: flex; flex-direction: column; gap: 12px;
+  border-radius: 10px;
+  width: 100%; max-width: 400px; max-height: 85vh;
+  overflow-y: auto; padding: 16px;
+  display: flex; flex-direction: column; gap: 10px;
 }
-.form-group { display: flex; flex-direction: column; gap: 5px; }
-.form-label { font-size: 0.75rem; font-weight: 600; color: var(--text-muted); }
+.form-group { display: flex; flex-direction: column; gap: 4px; text-align: left; }
+.form-label { font-size: 0.72rem; font-weight: 600; color: #8b949e; }
 .form-input {
   background: #0d1117; border: 1px solid var(--surface-border);
   border-radius: 6px; padding: 8px 10px; color: #fff; font-size: 0.85rem; width: 100%;
 }
-.export-options-grid { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
-.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 6px; }
 .hidden { display: none !important; }
