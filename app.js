@@ -1,5 +1,5 @@
 /**
- * AI Finish Line Mobile - Complete Timing, Multi-Pose Tracking & Email Export
+ * AI Finish Line Mobile - Fullscreen Viewport & Layered Overlays
  */
 
 // ==========================================
@@ -252,6 +252,7 @@ class AppController {
     this.tracker = new MultiPersonTracker();
     this.detector = null;
 
+    // Line endpoints stored in normalized coordinates [0.0 - 1.0] of the video feed
     this.line = { p1: { x: 0.5, y: 0.05 }, p2: { x: 0.5, y: 0.95 } };
     this.direction = 'ltr';
 
@@ -272,7 +273,7 @@ class AppController {
     this.canvasElem = document.getElementById('overlay');
     this.ctx = this.canvasElem.getContext('2d', { willReadFrequently: true });
     this.activePointerHandle = null;
-    this.touchThreshold = 38;
+    this.touchThreshold = 44; // Touch target size in physical screen pixels
 
     this.init();
   }
@@ -288,6 +289,40 @@ class AppController {
     this.startRenderingLoop();
   }
 
+  // Projection matrix between normalized video coordinates [0, 1] and fullscreen screen pixels
+  getVideoTransform() {
+    const sw = window.innerWidth;
+    const sh = window.innerHeight;
+    const vw = this.videoElem.videoWidth || sw;
+    const vh = this.videoElem.videoHeight || sh;
+
+    const scale = Math.max(sw / vw, sh / vh);
+    const rw = vw * scale;
+    const rh = vh * scale;
+    const offX = (sw - rw) / 2;
+    const offY = (sh - rh) / 2;
+
+    return { scale, offX, offY, sw, sh, vw, vh };
+  }
+
+  screenToNormVideo(sx, sy) {
+    const { scale, offX, offY, vw, vh } = this.getVideoTransform();
+    const vx = (sx - offX) / scale;
+    const vy = (sy - offY) / scale;
+    return {
+      x: Math.max(0.001, Math.min(0.999, vx / vw)),
+      y: Math.max(0.001, Math.min(0.999, vy / vh))
+    };
+  }
+
+  normVideoToScreen(nx, ny) {
+    const { scale, offX, offY, vw, vh } = this.getVideoTransform();
+    return {
+      x: (nx * vw) * scale + offX,
+      y: (ny * vh) * scale + offY
+    };
+  }
+
   async initCamera() {
     try {
       if (this.videoElem.srcObject) {
@@ -297,8 +332,8 @@ class AppController {
         audio: false,
         video: {
           facingMode: { ideal: this.facingMode },
-          width: { ideal: 1280, min: 640 },
-          height: { ideal: 720, min: 480 },
+          width: { ideal: 1920, min: 640 },
+          height: { ideal: 1080, min: 480 },
           frameRate: { ideal: 60, min: 30 }
         }
       };
@@ -319,13 +354,12 @@ class AppController {
         this.videoElem.requestVideoFrameCallback(onFrame);
       }
     } catch (err) {
-      this.showAlert('Camera Error', `Could not initialize camera: ${err.message}. Please check permissions.`);
+      this.showAlert('Camera Error', `Could not access camera: ${err.message}. Please check permissions.`);
     }
   }
 
   async initDetector() {
     try {
-      document.getElementById('model-pill').textContent = 'Loading MoveNet...';
       await tf.ready();
       if (tf.getBackend() !== 'webgl') {
         await tf.setBackend('webgl');
@@ -338,18 +372,21 @@ class AppController {
           minPoseScore: 0.25
         }
       );
-      document.getElementById('model-pill').textContent = 'MoveNet MultiPose Ready';
-      document.getElementById('model-pill').classList.add('active');
     } catch (err) {
-      document.getElementById('model-pill').textContent = 'Model Offline';
-      document.getElementById('model-pill').classList.add('warning');
+      console.warn('MoveNet MultiPose initialization warning:', err);
     }
   }
 
   syncCanvasDimensions() {
-    const rect = this.videoElem.getBoundingClientRect();
-    this.canvasElem.width = this.videoElem.videoWidth || rect.width;
-    this.canvasElem.height = this.videoElem.videoHeight || rect.height;
+    const dpr = window.devicePixelRatio || 1;
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    if (this.canvasElem.width !== w * dpr || this.canvasElem.height !== h * dpr) {
+      this.canvasElem.width = w * dpr;
+      this.canvasElem.height = h * dpr;
+      this.ctx.resetTransform?.();
+      this.ctx.scale(dpr, dpr);
+    }
   }
 
   setupVisibilityListener() {
@@ -358,6 +395,7 @@ class AppController {
         await this.acquireWakeLock();
       }
     });
+    window.addEventListener('resize', () => this.syncCanvasDimensions());
   }
 
   async acquireWakeLock() {
@@ -412,7 +450,7 @@ class AppController {
       }));
 
       const activeTracks = this.tracker.update(normalizedPoses, timestamp);
-      document.getElementById('active-tracks').textContent = `Tracks: ${activeTracks.length}`;
+      document.getElementById('active-tracks').textContent = `${activeTracks.length} RUNNERS`;
 
       if (this.raceState === 'RUNNING') {
         this.checkCrossings(activeTracks, timestamp);
@@ -513,74 +551,67 @@ class AppController {
   }
 
   renderOverlay() {
-    const w = this.canvasElem.width;
-    const h = this.canvasElem.height;
+    const w = window.innerWidth;
+    const h = window.innerHeight;
     this.ctx.clearRect(0, 0, w, h);
 
+    // 1. Draw Active Tracks & Skeletons mapped onto the screen
     for (const track of this.tracker.tracks) {
       const pos = track.currentPosition();
-      const sx = pos.x * w;
-      const sy = pos.y * h;
+      const sPos = this.normVideoToScreen(pos.x, pos.y);
 
       this.ctx.beginPath();
-      this.ctx.arc(sx, sy, 8, 0, 2 * Math.PI);
+      this.ctx.arc(sPos.x, sPos.y, 6, 0, 2 * Math.PI);
       this.ctx.fillStyle = track.status === 'crossed' ? '#da3633' : '#38ef7d';
       this.ctx.fill();
 
       this.ctx.fillStyle = '#ffffff';
-      this.ctx.font = 'bold 12px monospace';
-      this.ctx.fillText(`ID:${track.id}`, sx + 10, sy - 10);
+      this.ctx.font = 'bold 11px monospace';
+      this.ctx.fillText(`ID:${track.id}`, sPos.x + 8, sPos.y - 8);
     }
 
-    const p1x = this.line.p1.x * w;
-    const p1y = this.line.p1.y * h;
-    const p2x = this.line.p2.x * w;
-    const p2y = this.line.p2.y * h;
+    // 2. Draw Finish Line mapped onto the screen
+    const p1s = this.normVideoToScreen(this.line.p1.x, this.line.p1.y);
+    const p2s = this.normVideoToScreen(this.line.p2.x, this.line.p2.y);
 
     this.ctx.beginPath();
-    this.ctx.moveTo(p1x, p1y);
-    this.ctx.lineTo(p2x, p2y);
+    this.ctx.moveTo(p1s.x, p1s.y);
+    this.ctx.lineTo(p2s.x, p2s.y);
     this.ctx.strokeStyle = '#2ea043';
-    this.ctx.lineWidth = 4;
+    this.ctx.lineWidth = 3.5;
     this.ctx.setLineDash([8, 4]);
     this.ctx.stroke();
     this.ctx.setLineDash([]);
 
-    this.drawHandle(p1x, p1y);
-    this.drawHandle(p2x, p2y);
+    // 3. Draw Touch Handles
+    this.drawHandle(p1s.x, p1s.y);
+    this.drawHandle(p2s.x, p2s.y);
   }
 
   drawHandle(x, y) {
     this.ctx.beginPath();
     this.ctx.arc(x, y, 16, 0, 2 * Math.PI);
-    this.ctx.fillStyle = 'rgba(46, 160, 67, 0.4)';
+    this.ctx.fillStyle = 'rgba(46, 160, 67, 0.45)';
     this.ctx.fill();
     this.ctx.beginPath();
-    this.ctx.arc(x, y, 8, 0, 2 * Math.PI);
+    this.ctx.arc(x, y, 7, 0, 2 * Math.PI);
     this.ctx.fillStyle = '#ffffff';
     this.ctx.fill();
   }
 
   setupUIListeners() {
     const overlay = this.canvasElem;
-    const getEventPos = (e) => {
-      const rect = overlay.getBoundingClientRect();
-      const clientX = e.clientX || (e.touches && e.touches[0].clientX);
-      const clientY = e.clientY || (e.touches && e.touches[0].clientY);
-      return {
-        x: (clientX - rect.left) / rect.width,
-        y: (clientY - rect.top) / rect.height
-      };
-    };
 
     overlay.addEventListener('pointerdown', (e) => {
       e.preventDefault();
-      const pos = getEventPos(e);
-      const w = overlay.width;
-      const h = overlay.height;
+      const sx = e.clientX;
+      const sy = e.clientY;
 
-      const d1 = Math.hypot((pos.x - this.line.p1.x) * w, (pos.y - this.line.p1.y) * h);
-      const d2 = Math.hypot((pos.x - this.line.p2.x) * w, (pos.y - this.line.p2.y) * h);
+      const p1s = this.normVideoToScreen(this.line.p1.x, this.line.p1.y);
+      const p2s = this.normVideoToScreen(this.line.p2.x, this.line.p2.y);
+
+      const d1 = Math.hypot(sx - p1s.x, sy - p1s.y);
+      const d2 = Math.hypot(sx - p2s.x, sy - p2s.y);
 
       if (d1 < this.touchThreshold) {
         this.activePointerHandle = 'p1';
@@ -594,14 +625,12 @@ class AppController {
     overlay.addEventListener('pointermove', (e) => {
       if (!this.activePointerHandle) return;
       e.preventDefault();
-      const pos = getEventPos(e);
-      const clampedX = Math.max(0.01, Math.min(0.99, pos.x));
-      const clampedY = Math.max(0.01, Math.min(0.99, pos.y));
+      const norm = this.screenToNormVideo(e.clientX, e.clientY);
 
       if (this.activePointerHandle === 'p1') {
-        this.line.p1 = { x: clampedX, y: clampedY };
+        this.line.p1 = norm;
       } else if (this.activePointerHandle === 'p2') {
-        this.line.p2 = { x: clampedX, y: clampedY };
+        this.line.p2 = norm;
       }
     });
 
@@ -648,22 +677,18 @@ class AppController {
       document.getElementById('export-modal').classList.add('hidden');
     };
 
-    // Option 1: Mobile Share Sheet (Attaches .csv file directly to Mail app)
     document.getElementById('btn-email-share').onclick = async () => {
       await this.handleShareViaEmail();
     };
 
-    // Option 2: Pre-populated mailto: link (Directly opens default Mail client with CSV body)
     document.getElementById('btn-email-mailto').onclick = () => {
       this.handleMailtoExport();
     };
 
-    // Option 3: Direct Download
     document.getElementById('btn-download-csv').onclick = () => {
       this.handleDownloadExport();
     };
 
-    // Option 4: Copy to Clipboard
     document.getElementById('btn-copy-csv').onclick = () => {
       this.handleCopyExport();
     };
@@ -723,7 +748,6 @@ class AppController {
         }
       }
     }
-    // Fallback to mailto if share sheet file sharing is unavailable
     this.handleMailtoExport();
   }
 
@@ -736,12 +760,11 @@ class AppController {
     const dateStr = new Date().toISOString().split('T')[0];
 
     const subject = encodeURIComponent(`Race Results - ${dateStr} (${this.finishers.length} Finishers)`);
-    // RFC 6068 safe length check for mailto URI bodies
     let bodyText = `Attached are the race results for ${dateStr}.\n\nTotal Finishers: ${this.finishers.length}\n\n`;
     if (csvContent.length < 1800) {
       bodyText += csvContent;
     } else {
-      bodyText += csvContent.substring(0, 1500) + '\n\n[...Truncated due to mailto link size limits. Use Download CSV or Share File for the complete file...]';
+      bodyText += csvContent.substring(0, 1500) + '\n\n[...Truncated due to mail link size limits. Use Download CSV or Share File for the complete file...]';
     }
 
     const mailtoUrl = `mailto:${encodeURIComponent(email)}?subject=${subject}&body=${encodeURIComponent(bodyText)}`;
@@ -774,14 +797,13 @@ class AppController {
     const csvContent = this.generateCSVContent(format);
     try {
       await navigator.clipboard.writeText(csvContent);
-      alert('CSV copied to clipboard! You can now paste it into any email.');
+      alert('CSV copied to clipboard! You can paste it into any email.');
       document.getElementById('export-modal').classList.add('hidden');
     } catch (_) {
       this.showAlert('Clipboard Error', 'Could not copy to clipboard. Please use Download or Share.');
     }
   }
 
-  // --- Session & Timing State Controls ---
   resetLineCoordinates() {
     this.line = { p1: { x: 0.5, y: 0.05 }, p2: { x: 0.5, y: 0.95 } };
   }
@@ -885,9 +907,8 @@ class AppController {
       this.perf.infFrames = 0;
       this.perf.lastSec = now;
 
-      document.getElementById('fps-render').textContent = `Render: ${this.perf.renderFps} fps`;
-      document.getElementById('fps-cam').textContent = `Camera: ${this.perf.camFps} fps`;
-      document.getElementById('fps-inf').textContent = `Inference: ${this.perf.infFps} fps`;
+      document.getElementById('fps-cam').textContent = `CAM: ${this.perf.camFps}`;
+      document.getElementById('fps-inf').textContent = `INF: ${this.perf.infFps}`;
     }
   }
 
@@ -907,28 +928,25 @@ class AppController {
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
   }
 
+  // ==========================================
+  // Render Layered Finishers (Position & Time Only)
+  // ==========================================
   renderResultsList() {
     const listElem = document.getElementById('results-list');
     listElem.innerHTML = '';
     document.getElementById('finisher-count').textContent = this.finishers.length;
 
+    // Latest finishes appear at the top
     const sorted = [...this.finishers].reverse();
     sorted.forEach((finisher) => {
       const li = document.createElement('li');
-      li.className = 'result-card';
+      li.className = 'finisher-compact-row';
       li.onclick = () => this.showReviewModal(finisher);
 
+      // Display strictly Position and Time as requested
       li.innerHTML = `
-        <div class="result-pos">#${finisher.position}</div>
-        <div class="result-meta">
-          <div class="result-time">${finisher.formattedTime}</div>
-          <div class="result-tags">
-            <span class="tag">${finisher.keypointUsed}</span>
-            <span class="tag">conf: ${finisher.confidence}</span>
-            ${finisher.flags.map(f => `<span class="tag warning">${f}</span>`).join('')}
-          </div>
-        </div>
-        ${finisher.snapshot ? `<img class="result-thumb" src="${finisher.snapshot}" alt="Evidence">` : ''}
+        <span class="finisher-compact-pos">#${finisher.position}</span>
+        <span class="finisher-compact-time">${finisher.formattedTime}</span>
       `;
       listElem.appendChild(li);
     });

@@ -17,15 +17,13 @@
     })();
   </script>
 
-  <!-- External Stylesheet Reference -->
   <link rel="stylesheet" href="./style.css">
 
-  <!-- Embedded Core CSS: Guarantees 100% styling on mobile under any network/path condition -->
   <style>
     :root {
       --bg-dark: #0a0e14;
-      --surface: #161b22;
-      --surface-border: #30363d;
+      --surface-glass: rgba(22, 27, 34, 0.78);
+      --surface-border: rgba(255, 255, 255, 0.18);
       --text-main: #f0f6fc;
       --text-muted: #8b949e;
       --accent-green: #2ea043;
@@ -33,141 +31,265 @@
       --accent-red: #da3633;
       --accent-yellow: #d29922;
       --accent-blue: #58a6ff;
-      --safe-top: env(safe-area-inset-top, 0px);
-      --safe-bottom: env(safe-area-inset-bottom, 0px);
-      --safe-left: env(safe-area-inset-left, 0px);
-      --safe-right: env(safe-area-inset-right, 0px);
+      --safe-top: env(safe-area-inset-top, 8px);
+      --safe-bottom: env(safe-area-inset-bottom, 8px);
+      --safe-left: env(safe-area-inset-left, 8px);
+      --safe-right: env(safe-area-inset-right, 8px);
     }
+
     * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      background-color: var(--bg-dark);
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      height: 100dvh;
+      overflow: hidden;
+      background-color: #000;
       color: var(--text-main);
-      min-height: 100vh;
-      min-height: -webkit-fill-available;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      user-select: none;
+    }
+
+    /* Fullscreen Edge-to-Edge Camera Viewport */
+    .fullscreen-camera-wrap {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      height: 100dvh;
+      z-index: 1;
+      background: #000;
+      overflow: hidden;
+    }
+
+    video#webcam {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      z-index: 1;
+    }
+
+    canvas#overlay {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 2;
+      touch-action: none;
+    }
+
+    /* Top Left: Clock & Telemetry HUD */
+    .top-left-hud {
+      position: fixed;
+      top: var(--safe-top);
+      left: var(--safe-left);
+      z-index: 10;
       display: flex;
       flex-direction: column;
-      overflow-x: hidden;
-      user-select: none;
-      padding-top: var(--safe-top);
-      padding-bottom: var(--safe-bottom);
-      padding-left: var(--safe-left);
-      padding-right: var(--safe-right);
+      gap: 6px;
+      pointer-events: none;
     }
-    header {
-      background: var(--surface);
-      border-bottom: 1px solid var(--surface-border);
-      padding: 8px 16px;
+
+    .clock-card {
+      background: var(--surface-glass);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      padding: 4px 12px;
+      border-radius: 8px;
+      border: 1px solid var(--surface-border);
+      display: inline-block;
+    }
+
+    .clock-display {
+      font-family: "SF Mono", Monaco, Consolas, monospace;
+      font-size: 1.5rem;
+      font-weight: 800;
+      color: #fff;
+      letter-spacing: 0.04em;
+    }
+
+    .telemetry-pills {
       display: flex;
-      justify-content: space-between;
-      align-items: center;
+      flex-wrap: wrap;
+      gap: 4px;
+      font-size: 0.68rem;
+      font-family: monospace;
     }
-    .title-badge { display: flex; align-items: center; gap: 8px; }
-    .title-badge h1 { font-size: 1.1rem; font-weight: 700; color: var(--accent-green); }
-    .status-pills { display: flex; gap: 8px; font-size: 0.75rem; font-family: monospace; }
-    .pill { padding: 4px 8px; border-radius: 12px; background: #21262d; border: 1px solid var(--surface-border); }
+
+    .pill {
+      padding: 2px 6px;
+      border-radius: 10px;
+      background: rgba(13, 17, 23, 0.85);
+      border: 1px solid var(--surface-border);
+      backdrop-filter: blur(4px);
+    }
     .pill.active { border-color: var(--accent-green); color: var(--accent-green); }
     .pill.warning { border-color: var(--accent-yellow); color: var(--accent-yellow); }
 
-    .viewport-container {
-      position: relative;
-      width: 100%;
-      flex: 1 1 auto;
-      min-height: 280px;
-      max-height: 55vh;
-      background: #000;
-      overflow: hidden;
+    /* Top Right: Layered Finishers Section (Position & Time Only) */
+    .finishers-overlay {
+      position: fixed;
+      top: var(--safe-top);
+      right: var(--safe-right);
+      width: 154px;
+      max-height: 48vh;
+      z-index: 10;
+      background: var(--surface-glass);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border: 1px solid var(--surface-border);
+      border-radius: 10px;
       display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    }
+
+    .finishers-overlay-header {
+      padding: 6px 10px;
+      background: rgba(0, 0, 0, 0.3);
+      border-bottom: 1px solid var(--surface-border);
+      display: flex;
+      justify-content: space-between;
       align-items: center;
-      justify-content: center;
-    }
-    video#webcam { position: absolute; width: 100%; height: 100%; object-fit: contain; z-index: 1; }
-    canvas#overlay { position: absolute; width: 100%; height: 100%; object-fit: contain; z-index: 2; touch-action: none; }
-
-    .hud-overlay {
-      position: absolute; top: 12px; left: 12px; right: 12px;
-      display: flex; justify-content: space-between; pointer-events: none; z-index: 3;
-    }
-    .clock-card {
-      background: rgba(13, 17, 23, 0.85); backdrop-filter: blur(6px);
-      padding: 6px 14px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.15);
-    }
-    .clock-display { font-family: "SF Mono", Monaco, Consolas, monospace; font-size: 1.75rem; font-weight: 800; color: #fff; }
-    .telemetry-card {
-      background: rgba(13, 17, 23, 0.85); backdrop-filter: blur(6px);
-      padding: 6px 12px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.15);
-      font-family: monospace; font-size: 0.72rem; display: flex; flex-direction: column; gap: 2px; text-align: right;
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
     }
 
-    .control-bar {
-      background: var(--surface); border-top: 1px solid var(--surface-border);
-      padding: 10px 14px; display: grid; grid-template-columns: repeat(auto-fit, minmax(88px, 1fr)); gap: 8px; z-index: 4;
+    .btn-tiny {
+      background: none;
+      border: none;
+      color: var(--accent-red);
+      font-size: 0.68rem;
+      font-weight: 600;
+      cursor: pointer;
+      padding: 2px 4px;
     }
-    button.btn {
-      background: #21262d; color: var(--text-main); border: 1px solid var(--surface-border);
-      border-radius: 8px; padding: 12px 6px; font-size: 0.82rem; font-weight: 600; cursor: pointer;
-      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
-      min-height: 48px; touch-action: manipulation;
-    }
-    button.btn:active { transform: scale(0.98); }
-    button.btn-primary { background: var(--accent-green); border-color: var(--accent-green-hover); color: #fff; }
-    button.btn-danger { background: var(--accent-red); border-color: #f85149; color: #fff; }
 
-    .results-section {
-      flex: 1 1 auto; background: var(--bg-dark); display: flex; flex-direction: column;
-      overflow: hidden; padding: 10px 14px;
-    }
-    .results-header {
-      display: flex; justify-content: space-between; align-items: center;
-      padding-bottom: 8px; border-bottom: 1px solid var(--surface-border);
-    }
-    .results-header h2 { font-size: 0.95rem; font-weight: 600; color: var(--text-muted); }
-    .results-list {
-      flex: 1; overflow-y: auto; list-style: none; margin-top: 8px; display: flex; flex-direction: column; gap: 6px;
+    .finishers-compact-list {
+      flex: 1;
+      overflow-y: auto;
+      list-style: none;
+      display: flex;
+      flex-direction: column;
       -webkit-overflow-scrolling: touch;
     }
-    .result-card {
-      background: var(--surface); border: 1px solid var(--surface-border); border-radius: 8px;
-      padding: 8px 12px; display: flex; justify-content: space-between; align-items: center; cursor: pointer;
-    }
-    .result-pos { font-size: 1.1rem; font-weight: 700; color: var(--accent-green); width: 44px; }
-    .result-meta { flex: 1; display: flex; flex-direction: column; gap: 2px; }
-    .result-time { font-family: monospace; font-size: 1.05rem; font-weight: 700; }
-    .result-tags { display: flex; gap: 6px; font-size: 0.7rem; }
-    .tag { padding: 2px 6px; border-radius: 4px; background: #21262d; color: var(--text-muted); }
-    .tag.warning { background: rgba(210, 153, 34, 0.2); color: var(--accent-yellow); }
-    .result-thumb { width: 48px; height: 48px; border-radius: 4px; object-fit: cover; background: #000; margin-left: 8px; }
 
-    /* Modals & Email Input Form */
+    .finisher-compact-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 10px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      cursor: pointer;
+      font-family: "SF Mono", Monaco, Consolas, monospace;
+      transition: background 0.15s;
+    }
+    .finisher-compact-row:active {
+      background: rgba(255, 255, 255, 0.15);
+    }
+    .finisher-compact-row:last-child {
+      border-bottom: none;
+    }
+
+    .finisher-compact-pos {
+      font-size: 0.88rem;
+      font-weight: 800;
+      color: var(--accent-green);
+    }
+
+    .finisher-compact-time {
+      font-size: 0.84rem;
+      font-weight: 600;
+      color: #fff;
+    }
+
+    /* Small Floating UI Control Buttons at the Bottom */
+    .bottom-dock {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      z-index: 20;
+      padding-top: 8px;
+      padding-bottom: max(8px, var(--safe-bottom));
+      padding-left: max(8px, var(--safe-left));
+      padding-right: max(8px, var(--safe-right));
+      background: linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 75%, transparent 100%);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      pointer-events: none;
+    }
+
+    .dock-container {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 6px;
+      max-width: 600px;
+      width: 100%;
+      pointer-events: auto;
+    }
+
+    button.btn-small {
+      background: var(--surface-glass);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      color: var(--text-main);
+      border: 1px solid var(--surface-border);
+      border-radius: 6px;
+      padding: 7px 10px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      cursor: pointer;
+      min-height: 36px;
+      touch-action: manipulation;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      white-space: nowrap;
+    }
+    button.btn-small:active { transform: scale(0.96); }
+    button.btn-small.btn-primary { background: var(--accent-green); border-color: var(--accent-green-hover); color: #fff; }
+    button.btn-small.btn-danger { background: var(--accent-red); border-color: #f85149; color: #fff; }
+
+    /* Modals & Dialogs */
     .modal-overlay {
-      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(0, 0, 0, 0.75); display: flex; align-items: center; justify-content: center;
-      z-index: 999; padding: 16px; backdrop-filter: blur(4px);
+      position: fixed; inset: 0;
+      background: rgba(0, 0, 0, 0.75);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 999; padding: 16px;
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
     }
     .modal-content {
-      background: var(--surface); border: 1px solid var(--surface-border); border-radius: 12px;
-      width: 100%; max-width: 480px; max-height: 90vh; overflow-y: auto; padding: 20px;
-      display: flex; flex-direction: column; gap: 14px;
+      background: #161b22;
+      border: 1px solid var(--surface-border);
+      border-radius: 12px;
+      width: 100%; max-width: 440px; max-height: 90vh;
+      overflow-y: auto; padding: 18px;
+      display: flex; flex-direction: column; gap: 12px;
     }
-    .form-group { display: flex; flex-direction: column; gap: 6px; text-align: left; }
-    .form-label { font-size: 0.8rem; font-weight: 600; color: var(--text-muted); }
+    .form-group { display: flex; flex-direction: column; gap: 5px; }
+    .form-label { font-size: 0.75rem; font-weight: 600; color: var(--text-muted); }
     .form-input {
-      background: #0d1117; border: 1px solid var(--surface-border); border-radius: 6px;
-      padding: 10px 12px; color: #fff; font-size: 0.9rem; width: 100%;
+      background: #0d1117; border: 1px solid var(--surface-border);
+      border-radius: 6px; padding: 8px 10px; color: #fff; font-size: 0.85rem; width: 100%;
     }
-    .form-input:focus { outline: none; border-color: var(--accent-blue); }
-    .export-options-grid { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+    .export-options-grid { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
     .hidden { display: none !important; }
-
-    @media (min-width: 768px) {
-      body { flex-direction: row; }
-      .left-pane { flex: 1 1 60%; display: flex; flex-direction: column; height: 100vh; }
-      .viewport-container { max-height: calc(100vh - 120px); }
-      .right-pane { flex: 1 1 40%; border-left: 1px solid var(--surface-border); height: 100vh; display: flex; flex-direction: column; }
-    }
   </style>
 
-  <!-- TensorFlow.js Scripts -->
+  <!-- TensorFlow.js dependencies -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@4.17.0/dist/tf-core.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter@4.17.0/dist/tf-converter.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl@4.17.0/dist/tf-backend-webgl.min.js"></script>
@@ -175,65 +297,59 @@
 </head>
 <body>
 
-  <div class="left-pane">
-    <header>
-      <div class="title-badge">
-        <h1>AI Finish Line</h1>
-        <span class="pill" id="model-pill">MoveNet MultiPose</span>
-      </div>
-      <div class="status-pills">
-        <span class="pill" id="status-pill">STANDBY</span>
-        <span class="pill" id="dir-pill">DIR: L → R</span>
-      </div>
-    </header>
+  <!-- Fullscreen Edge-to-Edge Camera -->
+  <div class="fullscreen-camera-wrap">
+    <video id="webcam" playsinline muted autoplay></video>
+    <canvas id="overlay"></canvas>
+  </div>
 
-    <div class="viewport-container" id="viewport-container">
-      <video id="webcam" playsinline muted autoplay></video>
-      <canvas id="overlay"></canvas>
-      
-      <div class="hud-overlay">
-        <div class="clock-card">
-          <div class="clock-display" id="clock-display">00:00.000</div>
-        </div>
-        <div class="telemetry-card">
-          <span id="fps-render">Render: -- fps</span>
-          <span id="fps-cam">Camera: -- fps</span>
-          <span id="fps-inf">Inference: -- fps</span>
-          <span id="active-tracks">Tracks: 0</span>
-        </div>
-      </div>
+  <!-- Top-Left HUD (Clock & Status) -->
+  <div class="top-left-hud">
+    <div class="clock-card">
+      <div class="clock-display" id="clock-display">00:00.000</div>
     </div>
-
-    <div class="control-bar">
-      <button class="btn btn-primary" id="btn-start">START</button>
-      <button class="btn btn-danger" id="btn-stop" disabled>STOP</button>
-      <button class="btn" id="btn-dir">TOGGLE DIR</button>
-      <button class="btn" id="btn-reset-line">RESET LINE</button>
-      <button class="btn" id="btn-flip-cam">FLIP CAM</button>
-      <button class="btn btn-primary" id="btn-export">EXPORT / EMAIL</button>
-      <button class="btn" id="btn-new-race">NEW RACE</button>
+    <div class="telemetry-pills">
+      <span class="pill" id="status-pill">STANDBY</span>
+      <span class="pill" id="dir-pill">DIR: L → R</span>
+      <span class="pill" id="fps-cam">CAM: --</span>
+      <span class="pill" id="fps-inf">INF: --</span>
+      <span class="pill" id="active-tracks">0 RUNNERS</span>
     </div>
   </div>
 
-  <div class="right-pane">
-    <section class="results-section">
-      <div class="results-header">
-        <h2>FINISHERS (<span id="finisher-count">0</span>)</h2>
-        <button class="btn" id="btn-clear-results" style="min-height:30px; padding:4px 8px; font-size:0.75rem;">Clear All</button>
-      </div>
-      <ul class="results-list" id="results-list"></ul>
-    </section>
+  <!-- Top-Right: Layered Finishers HUD (Position & Time Only) -->
+  <div class="finishers-overlay">
+    <div class="finishers-overlay-header">
+      <span>Finishes (<span id="finisher-count">0</span>)</span>
+      <button class="btn-tiny" id="btn-clear-results">Clear</button>
+    </div>
+    <ul class="finishers-compact-list" id="results-list">
+      <!-- Displays only Position & Time -->
+    </ul>
+  </div>
+
+  <!-- Bottom Floating Dock with Small Buttons -->
+  <div class="bottom-dock">
+    <div class="dock-container">
+      <button class="btn-small btn-primary" id="btn-start">START</button>
+      <button class="btn-small btn-danger" id="btn-stop" disabled>STOP</button>
+      <button class="btn-small" id="btn-dir">DIR</button>
+      <button class="btn-small" id="btn-reset-line">LINE</button>
+      <button class="btn-small" id="btn-flip-cam">FLIP</button>
+      <button class="btn-small btn-primary" id="btn-export">EXPORT</button>
+      <button class="btn-small" id="btn-new-race">NEW</button>
+    </div>
   </div>
 
   <!-- Review / Audit Modal -->
   <div class="modal-overlay hidden" id="review-modal">
     <div class="modal-content">
-      <h3 id="modal-title">Finisher Review</h3>
-      <img id="modal-snapshot" class="result-thumb" style="width:100%; height:auto; max-height:240px; border-radius:8px;" alt="Photo evidence">
-      <div id="modal-details" style="font-size:0.85rem; line-height:1.5;"></div>
-      <div class="modal-actions" style="display:flex; justify-content:flex-end; gap:8px;">
-        <button class="btn btn-danger" id="btn-modal-discard">Discard Finisher</button>
-        <button class="btn" id="btn-modal-close">Close</button>
+      <h3 id="modal-title" style="font-size:1.05rem;">Finisher Review</h3>
+      <img id="modal-snapshot" style="width:100%; max-height:220px; object-fit:cover; border-radius:6px; background:#000;" alt="Photo evidence">
+      <div id="modal-details" style="font-size:0.8rem; line-height:1.45; color:var(--text-muted);"></div>
+      <div class="modal-actions">
+        <button class="btn-small btn-danger" id="btn-modal-discard">Discard</button>
+        <button class="btn-small" id="btn-modal-close">Close</button>
       </div>
     </div>
   </div>
@@ -241,15 +357,15 @@
   <!-- Email & CSV Export Modal -->
   <div class="modal-overlay hidden" id="export-modal">
     <div class="modal-content">
-      <h3 style="color:#fff;">Export & Email Results</h3>
+      <h3 style="font-size:1.05rem;">Export Results</h3>
 
       <div class="form-group">
         <label class="form-label" for="export-email">Recipient Email Address:</label>
-        <input class="form-input" type="email" id="export-email" placeholder="e.g. director@parkrun.com or timer@gmail.com" autocomplete="email">
+        <input class="form-input" type="email" id="export-email" placeholder="e.g. results@parkrun.com or timer@gmail.com" autocomplete="email">
       </div>
 
       <div class="form-group">
-        <label class="form-label">Select Export Format:</label>
+        <label class="form-label">Export Format:</label>
         <select class="form-input" id="export-format">
           <option value="parkrun_std">Parkrun Standard (Position, Time)</option>
           <option value="parkrun_barcode">Parkrun Scanned (Position, Time, Barcode)</option>
@@ -258,14 +374,14 @@
       </div>
 
       <div class="export-options-grid">
-        <button class="btn btn-primary" id="btn-email-share">Share CSV File to Email App</button>
-        <button class="btn" id="btn-email-mailto">Open Email App (Embedded Body)</button>
-        <button class="btn" id="btn-download-csv">Download CSV File Directly</button>
-        <button class="btn" id="btn-copy-csv">Copy CSV to Clipboard</button>
+        <button class="btn-small btn-primary" id="btn-email-share">Share CSV File to Email App</button>
+        <button class="btn-small" id="btn-email-mailto">Open Email App (Embedded Body)</button>
+        <button class="btn-small" id="btn-download-csv">Download CSV File Directly</button>
+        <button class="btn-small" id="btn-copy-csv">Copy CSV to Clipboard</button>
       </div>
 
-      <div class="modal-actions" style="display:flex; justify-content:flex-end; margin-top:8px;">
-        <button class="btn" id="btn-export-cancel">Cancel</button>
+      <div class="modal-actions">
+        <button class="btn-small" id="btn-export-cancel">Cancel</button>
       </div>
     </div>
   </div>
@@ -273,10 +389,10 @@
   <!-- System Alert Modal -->
   <div class="modal-overlay hidden" id="alert-modal">
     <div class="modal-content">
-      <h3 id="alert-title" style="color:var(--accent-red);">System Alert</h3>
-      <p id="alert-message" style="font-size:0.9rem; line-height:1.4;"></p>
-      <div class="modal-actions" style="display:flex; justify-content:flex-end;">
-        <button class="btn btn-primary" id="btn-alert-dismiss">Dismiss</button>
+      <h3 id="alert-title" style="color:var(--accent-red); font-size:1.05rem;">System Alert</h3>
+      <p id="alert-message" style="font-size:0.85rem; line-height:1.4;"></p>
+      <div class="modal-actions">
+        <button class="btn-small btn-primary" id="btn-alert-dismiss">Dismiss</button>
       </div>
     </div>
   </div>
