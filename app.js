@@ -464,7 +464,7 @@ class RunnerTrackingApp {
     el.style.color = kind === 'error' ? '#da3633' : kind === 'warn' ? '#d29922' : '#2ea043';
   }
 
-  exportCSV() {
+  async exportCSV() {
     const rows = [
       ['Position','Runner ID','Time','Elapsed ms','Crossing timestamp','Confidence','Alpha','Flags'],
       ...this.pipeline.finishers.map(f => [
@@ -473,16 +473,43 @@ class RunnerTrackingApp {
       ])
     ];
     const csv = rows.map(row => row.map(value => {
-      const s = String(value ?? '');
-      return '"' + s.replaceAll('"', '""') + '"';
+      const valueText = String(value ?? '');
+      return '"' + valueText.replaceAll('"', '""') + '"';
     }).join(',')).join('\r\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+
+    const filename = 'race-results-' + new Date().toISOString().replaceAll(':','-') + '.csv';
+    const file = new File([csv], filename, { type: 'text/csv;charset=utf-8' });
+
+    // On supported phones, open the native share sheet with the CSV attached.
+    // The user can choose Mail, Gmail, Outlook, or another installed app.
+    if (navigator.share && navigator.canShare?.({ files: [file] })) {
+      try {
+        await navigator.share({
+          files: [file],
+          title: 'Race results',
+          text: 'Race results CSV'
+        });
+        return;
+      } catch (error) {
+        if (error?.name === 'AbortError') return; // User dismissed the share sheet.
+        console.warn('Native file sharing failed; falling back to email:', error);
+      }
+    }
+
+    // Fallback: download the CSV and open the device's configured email app.
+    const blob = new Blob([file], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'race-results-' + new Date().toISOString().replaceAll(':','-') + '.csv';
-    a.click();
-    URL.revokeObjectURL(url);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 30000);
+
+    const subject = encodeURIComponent('Race results');
+    const body = encodeURIComponent('Please attach the downloaded race results CSV file to this email.');
+    window.location.href = 'mailto:?subject=' + subject + '&body=' + body;
   }
 }
 
