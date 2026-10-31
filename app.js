@@ -66,128 +66,89 @@ class RunnerTrackingApp {
   }
 
   buildControls() {
-    // Build the controller UI here so the prototype remains usable even if
-    // the HTML is kept intentionally minimal.
+    const viewport = this.canvas.parentElement;
+    viewport.style.cssText = 'position:relative;flex:1;min-width:0;min-height:0;width:100%;height:100%;overflow:hidden;background:#000;touch-action:pan-y';
+    this.canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;max-width:none;max-height:none;object-fit:contain;display:block';
+    this.video.style.cssText = 'display:none';
     let controls = $('app-controls');
-    if (!controls) {
-      controls = document.createElement('section');
-      controls.id = 'app-controls';
-      controls.style.cssText = [
-        'position:absolute','z-index:10','left:12px','right:12px','bottom:12px',
-        'display:flex','flex-wrap:wrap','gap:8px','align-items:center',
-        'padding:10px','background:rgba(22,27,34,.94)','border:1px solid #30363d',
-        'border-radius:10px','backdrop-filter:blur(8px)'
-      ].join(';');
-      this.canvas.parentElement.appendChild(controls);
-    }
-
+    if (!controls) { controls = document.createElement('section'); controls.id = 'app-controls'; viewport.appendChild(controls); }
     controls.innerHTML = `
-      <button id="app-start" class="primary">Start race</button>
-      <button id="app-stop">Stop</button>
-      <button id="app-reset">Reset race</button>
-      <button id="app-camera">Use camera</button>
-      <button id="app-file">Load video</button>
-      <button id="app-mock">Synthetic test</button>
-      <select id="app-scenario" aria-label="Synthetic test scenario">
-        <option value="pack_crossing">Pack crossing</option>
-        <option value="occlusion_and_cross">Occlusion</option>
-        <option value="reversal_no_finish">Reversal</option>
-      </select>
-      <select id="app-direction" aria-label="Crossing direction">
-        <option value="ltr">Left to right</option>
-        <option value="rtl">Right to left</option>
-      </select>
-      <button id="app-line">Set finish line</button>
-      <button id="app-export">Export CSV</button>
-      <input id="app-video-file" type="file" accept="video/*" hidden>
-      <span id="app-mode" style="font-size:.75rem;color:#8b949e">Mode: synthetic</span>
-    `;
-
-    let telemetry = $('app-telemetry');
-    if (!telemetry) {
-      telemetry = document.createElement('div');
-      telemetry.id = 'app-telemetry';
-      telemetry.style.cssText = 'position:absolute;z-index:5;top:12px;left:12px;padding:8px 10px;background:rgba(13,17,23,.85);border:1px solid #30363d;border-radius:8px;font:12px monospace;line-height:1.7;color:#f0f6fc';
-      this.canvas.parentElement.appendChild(telemetry);
-    }
-
-    let results = $('app-results');
-    if (!results) {
-      results = document.createElement('aside');
-      results.id = 'app-results';
-      results.style.cssText = 'position:absolute;z-index:5;top:12px;right:12px;width:min(270px,45%);max-height:45%;overflow:auto;padding:10px;background:rgba(13,17,23,.9);border:1px solid #30363d;border-radius:8px;color:#f0f6fc;font:12px monospace';
-      results.innerHTML = '<strong>Finishers</strong><ol id="app-finisher-list" style="padding:8px 0 0 22px"></ol>';
-      this.canvas.parentElement.appendChild(results);
-    }
-
-    const help = $('app-help');
-    if (!help) {
-      const note = document.createElement('div');
-      note.id = 'app-help';
-      note.style.cssText = 'font-size:11px;color:#8b949e;flex-basis:100%';
-      note.textContent = 'Drag on the video to position the finish line after selecting “Set finish line”. Camera/video inference requires a real detector module; synthetic mode tests the tracking and timing pipeline.';
-      controls.appendChild(note);
-    }
+      <button id="app-start" class="primary">START</button>
+      <button id="app-stop">STOP</button>
+      <button id="app-more" aria-expanded="false">MORE</button>
+      <div id="app-more-menu" hidden>
+        <button id="app-line">Set finish line</button>
+        <button id="app-direction">Direction: left → right</button>
+        <button id="app-export">Export as CSV</button>
+        <button id="app-flip">Flip camera</button>
+        <button id="app-new">New race</button>
+      </div>`;
+    controls.style.cssText = 'position:absolute;z-index:20;left:50%;bottom:max(14px,env(safe-area-inset-bottom));transform:translateX(-50%);display:flex;align-items:center;gap:8px;padding:8px;background:rgba(13,17,23,.88);border:1px solid rgba(255,255,255,.16);border-radius:16px;box-shadow:0 8px 30px #0008;backdrop-filter:blur(12px);max-width:calc(100% - 20px)';
+    controls.querySelectorAll('button').forEach(b=>b.style.cssText='min-height:46px;min-width:66px;padding:0 15px;border:1px solid #424b57;border-radius:11px;background:#212936;color:#f0f6fc;font-weight:700;font-size:13px;letter-spacing:.04em;touch-action:manipulation;white-space:nowrap');
+    $('app-start').style.background='#16833b'; $('app-stop').style.background='#a52b2b';
+    const menu=$('app-more-menu');
+    menu.style.cssText='position:absolute;bottom:calc(100% + 10px);right:0;min-width:190px;padding:7px;gap:5px;flex-direction:column;background:rgba(22,27,34,.97);border:1px solid #424b57;border-radius:13px;box-shadow:0 8px 30px #0009';
+    menu.querySelectorAll('button').forEach(b=>b.style.cssText='width:100%;min-height:44px;text-align:left;padding:0 12px;border:0;border-radius:8px;background:#212936;color:#f0f6fc;font-size:13px;touch-action:manipulation');
+    let status=$('status-tag');
+    if(!status){status=document.createElement('div');status.id='status-tag';viewport.appendChild(status);}
+    status.style.cssText='position:absolute;z-index:10;top:max(12px,env(safe-area-inset-top));left:12px;padding:7px 10px;border-radius:9px;background:#0d1117cc;color:#2ea043;font:12px monospace;pointer-events:none';
+    let results=$('app-results');
+    if(!results){results=document.createElement('aside');results.id='app-results';viewport.appendChild(results);}
+    results.innerHTML='<div style="font:12px monospace;color:#fff">FINISHERS <span id="app-finisher-count">0</span></div><ol id="app-finisher-list" style="padding:5px 0 0 22px;margin:0;font:12px monospace;color:#fff"></ol>';
+    results.style.cssText='position:absolute;z-index:10;top:max(12px,env(safe-area-inset-top));right:12px;width:min(210px,42%);max-height:32%;overflow:auto;padding:9px;background:#0d1117cc;border:1px solid #ffffff26;border-radius:9px;pointer-events:auto';
+    let telemetry=$('app-telemetry');
+    if(!telemetry){telemetry=document.createElement('div');telemetry.id='app-telemetry';viewport.appendChild(telemetry);}
+    telemetry.style.cssText='position:absolute;z-index:8;left:12px;top:52px;max-width:70%;padding:5px 7px;background:#0d1117a8;border-radius:6px;color:#d0d7de;font:10px monospace;pointer-events:none';
   }
 
   bindEvents() {
-    $('app-start').addEventListener('click', () => this.startRace());
-    $('app-stop').addEventListener('click', () => this.stopRace());
-    $('app-reset').addEventListener('click', () => this.resetRace());
-    $('app-camera').addEventListener('click', () => this.startCamera());
-    $('app-file').addEventListener('click', () => $('app-video-file').click());
-    $('app-video-file').addEventListener('change', (e) => this.loadVideo(e.target.files?.[0]));
-    $('app-mock').addEventListener('click', () => this.useMock());
-    $('app-scenario').addEventListener('change', (e) => {
-      this.mockDetector = new MockDetector(e.target.value);
-      this.useMock();
+    $('app-start').addEventListener('click',()=>this.startRace());
+    $('app-stop').addEventListener('click',()=>this.stopRace());
+    $('app-more').addEventListener('click',()=>{
+      const menu=$('app-more-menu'),open=menu.hidden;
+      menu.hidden=!open;menu.style.display=open?'flex':'none';
+      $('app-more').setAttribute('aria-expanded',String(open));
     });
-    $('app-direction').addEventListener('change', (e) => {
-      this.pipeline.crossingEngine.direction = e.target.value;
+    $('app-line').addEventListener('click',()=>{
+      this.lineDrag=true;this.lineEnd='p1';$('app-line').textContent='Tap start point…';
+      $('app-more-menu').hidden=true;$('app-more-menu').style.display='none';
+      $('app-more').setAttribute('aria-expanded','false');this.setStatus('TAP TWO POINTS TO SET LINE','warn');
     });
-    $('app-line').addEventListener('click', () => {
-      this.lineDrag = !this.lineDrag;
-      $('app-line').textContent = this.lineDrag ? 'Tap line start point' : 'Set finish line';
-      this.setStatus(this.lineDrag ? 'SELECT FINISH LINE' : (this.running ? 'TIMING ACTIVE' : 'STANDBY'), this.lineDrag ? 'warn' : 'ok');
+    $('app-direction').addEventListener('click',()=>{
+      const line=this.pipeline.crossingEngine;line.direction=line.direction==='ltr'?'rtl':'ltr';
+      $('app-direction').textContent=line.direction==='ltr'?'Direction: left → right':'Direction: right → left';
     });
-    $('app-export').addEventListener('click', () => this.exportCSV());
-
-    this.canvas.addEventListener('pointerdown', (e) => this.onCanvasPointer(e));
-    this.canvas.addEventListener('pointerup', () => {
-      if (this.lineDrag && this.lineEnd === 'p2') {
-        this.lineDrag = false;
-        this.lineEnd = 'p1';
-        $('app-line').textContent = 'Set finish line';
-        this.setStatus(this.running ? 'TIMING ACTIVE' : 'STANDBY', 'ok');
-      }
+    $('app-export').addEventListener('click',()=>this.exportCSV());
+    $('app-flip').addEventListener('click',()=>this.flipCamera());
+    $('app-new').addEventListener('click',()=>{
+      if(confirm('Start a new race and clear the current results?'))this.resetRace();
     });
+    this.canvas.addEventListener('pointerdown',e=>this.onCanvasPointer(e));
   }
 
   async startCamera() {
-    if (!navigator.mediaDevices?.getUserMedia) {
-      this.setStatus('CAMERA API UNAVAILABLE — USE HTTPS', 'error');
-      return;
-    }
-    try {
+    if(!navigator.mediaDevices?.getUserMedia){this.setStatus('CAMERA UNAVAILABLE — OPEN OVER HTTPS','error');return;}
+    try{
       this.stopMedia();
-      this.stream = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: {
-          facingMode: { ideal: 'environment' },
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          frameRate: { ideal: 30, max: 60 }
-        }
-      });
-      this.video.srcObject = this.stream;
-      await this.video.play();
-      this.mode = 'camera';
+      this.stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{
+        facingMode:{ideal:this.cameraFacing||'environment'},width:{ideal:1920},height:{ideal:1080},frameRate:{ideal:30,max:60}
+      }});
+      this.video.srcObject=this.stream;await this.video.play();this.mode='camera';this.resizeCanvas();
       await this.initializeDetector();
-      this.updateModeLabel();
-      this.setStatus(this.detectorReady ? 'CAMERA READY' : 'CAMERA — NO DETECTOR', this.detectorReady ? 'ok' : 'warn');
-    } catch (error) {
-      this.setStatus('CAMERA ERROR: ' + error.message, 'error');
-    }
+      this.setStatus(this.detectorReady?'CAMERA READY':'CAMERA READY · DETECTOR NOT CONNECTED',this.detectorReady?'ok':'warn');
+    }catch(error){this.setStatus('CAMERA ERROR: '+error.message,'error');}
+  }
+
+  async flipCamera(){
+    this.cameraFacing=this.cameraFacing==='environment'?'user':'environment';
+    await this.startCamera();
+    $('app-more-menu').hidden=true;$('app-more-menu').style.display='none';$('app-more').setAttribute('aria-expanded','false');
+  }
+
+  resizeCanvas(){
+    const rect=this.canvas.getBoundingClientRect(),dpr=Math.min(window.devicePixelRatio||1,2);
+    const width=Math.max(1,Math.round(rect.width*dpr)),height=Math.max(1,Math.round(rect.height*dpr));
+    if(this.canvas.width!==width||this.canvas.height!==height){this.canvas.width=width;this.canvas.height=height;}
   }
 
   async loadVideo(file) {
@@ -245,11 +206,10 @@ class RunnerTrackingApp {
     this.setStatus('STOPPED', 'error');
   }
 
-  resetRace() {
-    this.pipeline = this.createPipeline();
-    this.running = false;
-    this.renderResults();
-    this.setStatus('RACE RESET', 'ok');
+  resetRace(){
+    this.pipeline=this.createPipeline();this.running=false;this.lineDrag=false;this.lineEnd='p1';
+    $('app-line').textContent='Set finish line';this.renderResults();this.setStatus('NEW RACE · STANDBY','ok');
+    $('app-more-menu').hidden=true;$('app-more-menu').style.display='none';$('app-more').setAttribute('aria-expanded','false');
   }
 
   stopMedia() {
@@ -274,101 +234,46 @@ class RunnerTrackingApp {
     }
   }
 
-  async loop(now) {
-    if (this.mode === 'file' && this.video.ended) {
-      this.stopRace();
-    }
-
-    if (this.mode === 'mock' || (this.video.readyState >= 2 && this.detectorReady)) {
-      // Prevent asynchronous inference calls from stacking up.
-      if (!this.processingFrame) {
-        this.processingFrame = true;
-        const t0 = performance.now();
-        try {
-          const detections = await this.getDetections(now);
-          this.pipeline.processFrame(detections, now);
-          this.lastLatency = performance.now() - t0;
-        } finally {
-          this.processingFrame = false;
-        }
+  async loop(now){
+    if(this.mode==='file'&&this.video.ended)this.stopRace();
+    this.resizeCanvas();
+    if(this.mode==='mock'||(this.video.readyState>=2&&this.detectorReady)){
+      if(!this.processingFrame){
+        this.processingFrame=true;const t0=performance.now();
+        try{const detections=await this.getDetections(now);this.pipeline.processFrame(detections,now);this.lastLatency=performance.now()-t0;}
+        finally{this.processingFrame=false;}
       }
     }
-
     this.fpsFrames++;
-    if (now - this.fpsStartedAt >= 1000) {
-      this.fps = this.fpsFrames * 1000 / (now - this.fpsStartedAt);
-      this.fpsFrames = 0;
-      this.fpsStartedAt = now;
-    }
-
-    this.draw();
-    this.updateTelemetry();
-    this.rafId = requestAnimationFrame(this.loop);
+    if(now-this.fpsStartedAt>=1000){this.fps=this.fpsFrames*1000/(now-this.fpsStartedAt);this.fpsFrames=0;this.fpsStartedAt=now;}
+    this.draw();this.updateTelemetry();this.rafId=requestAnimationFrame(this.loop);
   }
 
-  draw() {
-    const { canvas, ctx, video } = this;
-    const w = canvas.width;
-    const h = canvas.height;
-    ctx.clearRect(0, 0, w, h);
-
-    if ((this.mode === 'camera' || this.mode === 'file') && video.readyState >= 2) {
-      ctx.drawImage(video, 0, 0, w, h);
-    } else {
-      ctx.fillStyle = '#111820';
-      ctx.fillRect(0, 0, w, h);
-      ctx.fillStyle = '#8b949e';
-      ctx.font = '16px monospace';
-      ctx.fillText('Synthetic detection test', 20, 30);
-    }
-
-    const line = this.pipeline.crossingEngine;
-    ctx.beginPath();
-    ctx.moveTo(line.p1.x * w, line.p1.y * h);
-    ctx.lineTo(line.p2.x * w, line.p2.y * h);
-    ctx.strokeStyle = '#2ea043';
-    ctx.lineWidth = Math.max(2, w / 500);
-    ctx.setLineDash([8, 5]);
-    ctx.stroke();
-    ctx.setLineDash([]);
-
-    for (const track of this.pipeline.tracker.tracks) {
-      const b = track.kf.getBBox();
-      const x = b.x * w, y = b.y * h, bw = b.width * w, bh = b.height * h;
-      ctx.strokeStyle = track.hasCrossed ? '#da3633' : '#58a6ff';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(x, y, bw, bh);
-      ctx.fillStyle = '#fff';
-      ctx.font = '13px monospace';
-      ctx.fillText('ID ' + track.id + ' · ' + track.score.toFixed(2), x, Math.max(14, y - 5));
-      const point = track.trajectory[track.trajectory.length - 1];
-      if (point) {
-        ctx.beginPath();
-        ctx.arc(point.x * w, point.y * h, 4, 0, Math.PI * 2);
-        ctx.fillStyle = track.hasCrossed ? '#da3633' : '#2ea043';
-        ctx.fill();
-      }
+  draw(){
+    const {canvas,ctx,video}=this,w=canvas.width,h=canvas.height;
+    ctx.clearRect(0,0,w,h);
+    if((this.mode==='camera'||this.mode==='file')&&video.readyState>=2){
+      const vw=video.videoWidth||w,vh=video.videoHeight||h,scale=Math.max(w/vw,h/vh),dw=vw*scale,dh=vh*scale;
+      ctx.drawImage(video,(w-dw)/2,(h-dh)/2,dw,dh);
+    }else{ctx.fillStyle='#080b10';ctx.fillRect(0,0,w,h);ctx.fillStyle='#8b949e';ctx.font='16px monospace';ctx.fillText('Waiting for camera…',20,32);}
+    const line=this.pipeline.crossingEngine;
+    ctx.beginPath();ctx.moveTo(line.p1.x*w,line.p1.y*h);ctx.lineTo(line.p2.x*w,line.p2.y*h);
+    ctx.strokeStyle='#2ea043';ctx.lineWidth=Math.max(3,w/450);ctx.setLineDash([10,7]);ctx.stroke();ctx.setLineDash([]);
+    for(const track of this.pipeline.tracker.tracks){
+      const b=track.kf.getBBox(),x=b.x*w,y=b.y*h,bw=b.width*w,bh=b.height*h;
+      ctx.strokeStyle=track.hasCrossed?'#da3633':'#58a6ff';ctx.lineWidth=Math.max(2,w/700);ctx.strokeRect(x,y,bw,bh);
+      ctx.fillStyle='#fff';ctx.font='14px monospace';ctx.fillText('ID '+track.id,x,Math.max(16,y-5));
     }
   }
 
-  onCanvasPointer(event) {
-    if (!this.lineDrag) return;
-    const rect = this.canvas.getBoundingClientRect();
-    const point = {
-      x: Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)),
-      y: Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height))
+  onCanvasPointer(event){
+    if(!this.lineDrag)return;
+    const rect=this.canvas.getBoundingClientRect(),point={
+      x:Math.max(0,Math.min(1,(event.clientX-rect.left)/rect.width)),
+      y:Math.max(0,Math.min(1,(event.clientY-rect.top)/rect.height))
     };
-    if (this.lineEnd === 'p1') {
-      this.pipeline.crossingEngine.p1 = point;
-      this.lineEnd = 'p2';
-      $('app-line').textContent = 'Tap line end point';
-    } else {
-      this.pipeline.crossingEngine.p2 = point;
-      this.lineEnd = 'p1';
-      this.lineDrag = false;
-      $('app-line').textContent = 'Set finish line';
-      this.setStatus(this.running ? 'TIMING ACTIVE' : 'STANDBY', 'ok');
-    }
+    if(this.lineEnd==='p1'){this.pipeline.crossingEngine.p1=point;this.lineEnd='p2';$('app-line').textContent='Tap end point…';}
+    else{this.pipeline.crossingEngine.p2=point;this.lineEnd='p1';this.lineDrag=false;$('app-line').textContent='Set finish line';this.setStatus(this.running?'TIMING ACTIVE':'STANDBY','ok');}
   }
 
   onFinisher(event) {
@@ -385,15 +290,13 @@ class RunnerTrackingApp {
     }
   }
 
-  renderResults() {
-    const list = $('app-finisher-list');
-    if (!list) return;
-    list.replaceChildren();
-    for (const event of this.pipeline.finishers) {
-      const li = document.createElement('li');
-      li.textContent = '#' + event.position + '  ' + event.formattedTime +
-        '  (runner ' + event.trackId + ')' +
-        (event.flags.length ? ' ⚠ ' + event.flags.join(', ') : '');
+  renderResults(){
+    const list=$('app-finisher-list'),count=$('app-finisher-count');
+    if(count)count.textContent=String(this.pipeline.finishers.length);
+    if(!list)return;list.replaceChildren();
+    for(const event of this.pipeline.finishers){
+      const li=document.createElement('li');
+      li.textContent='#'+event.position+'  '+event.formattedTime+'  (ID '+event.trackId+')'+(event.flags.length?' ⚠':'');
       list.appendChild(li);
     }
   }
