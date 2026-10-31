@@ -78,7 +78,7 @@
   </div>
 
   <!-- Top-Right HUD: Collapsible Minimal Finishers (Position & Time Only) -->
-  <div class="finishers-overlay" id="finishers-panel" aria-label="Finishers List">
+  <div class="finishers-overlay collapsed" id="finishers-panel" aria-label="Finishers List">
     <div class="finishers-overlay-header">
       <span>Finishes (<span id="finisher-count">0</span>)</span>
       <div class="header-actions">
@@ -96,11 +96,14 @@
     <div class="dock-container" role="toolbar" aria-label="Race Timing Controls">
       <button class="btn-small btn-primary" id="btn-start" disabled>START</button>
       <button class="btn-small btn-danger" id="btn-stop" disabled>STOP</button>
-      <button class="btn-small" id="btn-dir">DIR</button>
-      <button class="btn-small" id="btn-reset-line">LINE</button>
-      <button class="btn-small" id="btn-flip-cam">FLIP</button>
-      <button class="btn-small btn-primary" id="btn-export">EXPORT</button>
-      <button class="btn-small" id="btn-new-race">NEW</button>
+      <button class="btn-small" id="btn-toggle-controls" aria-expanded="false" aria-controls="extra-controls">MORE</button>
+      <div class="extra-controls" id="extra-controls">
+        <button class="btn-small" id="btn-dir">DIR</button>
+        <button class="btn-small" id="btn-reset-line">LINE</button>
+        <button class="btn-small" id="btn-flip-cam">FLIP</button>
+        <button class="btn-small btn-primary" id="btn-export">EXPORT</button>
+        <button class="btn-small" id="btn-new-race">NEW</button>
+      </div>
     </div>
   </div>
 
