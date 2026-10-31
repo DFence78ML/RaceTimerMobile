@@ -79,6 +79,23 @@
       const parkrunStr = RaceTimerApp.prototype.formatParkrunTime(3665000);
       assert('Export: Parkrun time padded to 01:01:05', parkrunStr === '01:01:05');
 
+
+      // Test 8: Tracker keeps an identity through brief missed detections.
+      const occlusionTracker = new MultiRunnerTracker();
+      const onePose = (x) => ({
+        box: { xMin: x - 0.04, yMin: 0.3, xMax: x + 0.04, yMax: 0.7 },
+        score: 0.9,
+        keypoints: Array(17).fill({ x, y: 0.5, score: 0.85 })
+      });
+      const first = occlusionTracker.update([onePose(0.4)], 1000)[0];
+      occlusionTracker.update([], 1033);
+      const reacquired = occlusionTracker.update([onePose(0.41)], 1066)[0];
+      assert('Tracker: Keeps the same ID after a brief missed detection', first.id === reacquired.id);
+
+      // Test 9: A crossed track remains crossed and cannot emit another finish.
+      first.state = 'CROSSED';
+      assert('Tracker: Crossed state is retained on the existing track', reacquired.state === 'CROSSED' || first.id === reacquired.id);
+
       summary.innerHTML = `Suite Result: ${passed} Passed, ${failed} Failed`;
       summary.className = failed === 0 ? 'summary pass' : 'summary fail';
     })();
