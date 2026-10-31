@@ -73,6 +73,7 @@ class RunnerTrack {
 
   update(pose, timestamp) {
     this.framesUnseen = 0;
+    this.lastSeenTimestamp = timestamp;
     const anchor = this.extractTorsoCentroid(pose);
     this.history.push({
       x: anchor.x,
@@ -149,46 +150,57 @@ class MultiRunnerTracker {
   constructor() {
     this.tracks = [];
     this.nextId = 1;
-    this.maxFramesUnseen = 12; // Track expiry window
+    // Keep identities through brief occlusion/frame drops on mobile.
+    this.maxLostMs = 1800;
+    this.maxMatchDistance = 0.20;
   }
 
   update(poses, timestamp) {
-    const assignedPoses = new Set();
+    const candidates = [];
 
-    // Match candidates using proximity to projected velocities
-    for (const track of this.tracks) {
-      const pred = track.predictPosition(timestamp);
-      let bestDist = Infinity;
-      let bestIdx = -1;
-
-      poses.forEach((pose, idx) => {
-        if (assignedPoses.has(idx)) return;
-        const anchor = track.extractTorsoCentroid(pose);
-        const dist = Math.hypot(pred.x - anchor.x, pred.y - anchor.y);
-        // Distance threshold in normalized 0-1 coordinates
-        if (dist < 0.22 && dist < bestDist) {
-          bestDist = dist;
-          bestIdx = idx;
+    // Build all plausible track/detection pairs first. Greedy per-track
+    // matching was order-dependent and could swap identities in a crowd.
+    for (let ti = 0; ti < this.tracks.length; ti++) {
+      const track = this.tracks[ti];
+      const predicted = track.predictPosition(timestamp);
+      for (let pi = 0; pi < poses.length; pi++) {
+        const anchor = track.extractTorsoCentroid(poses[pi]);
+        const distance = Math.hypot(predicted.x - anchor.x, predicted.y - anchor.y);
+        if (distance <= this.maxMatchDistance) {
+          candidates.push({ ti, pi, distance });
         }
-      });
-
-      if (bestIdx !== -1) {
-        track.update(poses[bestIdx], timestamp);
-        assignedPoses.add(bestIdx);
-      } else {
-        track.framesUnseen++;
       }
     }
 
-    // Allocate new tracks for unassociated detections
-    poses.forEach((pose, idx) => {
-      if (!assignedPoses.has(idx)) {
-        this.tracks.push(new RunnerTrack(this.nextId++, pose, timestamp));
-      }
-    });
+    candidates.sort((a, b) => a.distance - b.distance);
+    const usedTracks = new Set();
+    const usedPoses = new Set();
 
-    // Prune expired tracks
-    this.tracks = this.tracks.filter(t => t.framesUnseen <= this.maxFramesUnseen);
+    for (const candidate of candidates) {
+      if (usedTracks.has(candidate.ti) || usedPoses.has(candidate.pi)) continue;
+      this.tracks[candidate.ti].update(poses[candidate.pi], timestamp);
+      this.tracks[candidate.ti].lastSeenTimestamp = timestamp;
+      usedTracks.add(candidate.ti);
+      usedPoses.add(candidate.pi);
+    }
+
+    for (let ti = 0; ti < this.tracks.length; ti++) {
+      if (!usedTracks.has(ti)) this.tracks[ti].framesUnseen++;
+    }
+
+    for (let pi = 0; pi < poses.length; pi++) {
+      if (!usedPoses.has(pi)) {
+        const track = new RunnerTrack(this.nextId++, poses[pi], timestamp);
+        track.lastSeenTimestamp = timestamp;
+        this.tracks.push(track);
+      }
+    }
+
+    // Time-based expiry is independent of inference FPS. Retain crossed tracks
+    // slightly longer so a short occlusion cannot create a second finisher ID.
+    this.tracks = this.tracks.filter(track =>
+      timestamp - (track.lastSeenTimestamp ?? timestamp) <= this.maxLostMs
+    );
     return this.tracks;
   }
 }
@@ -754,6 +766,14 @@ class RaceTimerApp {
       const p = document.getElementById('finishers-panel');
       p.classList.toggle('collapsed');
       document.getElementById('btn-toggle-finishers').textContent = p.classList.contains('collapsed') ? '▲' : '▼';
+    };
+
+    document.getElementById('btn-toggle-controls').onclick = () => {
+      const dock = document.querySelector('.bottom-dock');
+      const expanded = dock.classList.toggle('expanded');
+      const button = document.getElementById('btn-toggle-controls');
+      button.textContent = expanded ? 'LESS' : 'MORE';
+      button.setAttribute('aria-expanded', String(expanded));
     };
 
     document.getElementById('btn-modal-close').onclick = () => {
