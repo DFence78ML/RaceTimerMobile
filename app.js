@@ -30,7 +30,7 @@ class RunnerTrackingApp {
     }
 
     this.ctx = this.canvas.getContext('2d');
-    this.mode = 'mock';
+    this.mode = 'camera';
     this.mockDetector = new MockDetector('pack_crossing');
     this.detector = null;
     this.detectorReady = false;
@@ -46,6 +46,9 @@ class RunnerTrackingApp {
     this.stream = null;
     this.lineDrag = false;
     this.lineEnd = 'p1';
+    this.lineMoveTarget = null;
+    this.pointerActive = false;
+    this.lastDetectionTimestamp = 0;
     this.reviewEvent = null;
 
     this.buildControls();
@@ -54,6 +57,8 @@ class RunnerTrackingApp {
     this.renderResults();
     this.loop = this.loop.bind(this);
     this.rafId = requestAnimationFrame(this.loop);
+    // Start the live camera and the built-in person detector together.
+    this.startCamera();
   }
 
   createPipeline() {
@@ -68,7 +73,7 @@ class RunnerTrackingApp {
   buildControls() {
     const viewport = this.canvas.parentElement;
     viewport.style.cssText = 'position:relative;flex:1;min-width:0;min-height:0;width:100%;height:100%;overflow:hidden;background:#000;touch-action:pan-y';
-    this.canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;max-width:none;max-height:none;object-fit:contain;display:block';
+    this.canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;max-width:none;max-height:none;object-fit:contain;display:block;touch-action:none;cursor:crosshair';
     this.video.style.cssText = 'display:none';
     let controls = $('app-controls');
     if (!controls) { controls = document.createElement('section'); controls.id = 'app-controls'; viewport.appendChild(controls); }
@@ -124,6 +129,9 @@ class RunnerTrackingApp {
       if(confirm('Start a new race and clear the current results?'))this.resetRace();
     });
     this.canvas.addEventListener('pointerdown',e=>this.onCanvasPointer(e));
+    this.canvas.addEventListener('pointermove',e=>this.onCanvasPointerMove(e));
+    this.canvas.addEventListener('pointerup',e=>this.onCanvasPointerEnd(e));
+    this.canvas.addEventListener('pointercancel',e=>this.onCanvasPointerEnd(e));
   }
 
   async startCamera() {
@@ -135,7 +143,7 @@ class RunnerTrackingApp {
       }});
       this.video.srcObject=this.stream;await this.video.play();this.mode='camera';this.resizeCanvas();
       await this.initializeDetector();
-      this.setStatus(this.detectorReady?'CAMERA READY':'CAMERA READY · DETECTOR NOT CONNECTED',this.detectorReady?'ok':'warn');
+      this.setStatus(this.detectorReady?'CAMERA + PERSON DETECTOR READY':'CAMERA READY · DETECTOR UNAVAILABLE',this.detectorReady?'ok':'warn');
     }catch(error){this.setStatus('CAMERA ERROR: '+error.message,'error');}
   }
 
@@ -173,13 +181,59 @@ class RunnerTrackingApp {
   async initializeDetector() {
     this.detectorReady = false;
     this.detector = null;
-    if (typeof window.runnerDetectorFactory !== 'function') return;
     try {
-      this.detector = await window.runnerDetectorFactory();
-      await this.detector.initialize?.();
-      this.detectorReady = typeof this.detector.detect === 'function';
+      // Allow a project-specific detector to override the built-in detector.
+      if (typeof window.runnerDetectorFactory === 'function') {
+        this.detector = await window.runnerDetectorFactory();
+        await this.detector.initialize?.();
+      } else {
+        // MediaPipe EfficientDet-Lite0: browser-native person detection.
+        const { FilesetResolver, ObjectDetector } = await import(
+          'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14'
+        );
+        const vision = await FilesetResolver.forVisionTasks(
+          'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
+        );
+        const model = 'https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.tflite';
+        const objectDetector = await ObjectDetector.createFromOptions(vision, {
+          baseOptions: { modelAssetPath: model, delegate: 'GPU' },
+          runningMode: 'VIDEO',
+          scoreThreshold: 0.25,
+          maxResults: 30
+        });
+        this.detector = {
+          detect: (video) => {
+            const timestamp = Math.max(performance.now(), this.lastDetectionTimestamp + 1);
+            this.lastDetectionTimestamp = timestamp;
+            const result = objectDetector.detectForVideo(video, timestamp);
+            const vw = video.videoWidth || 1, vh = video.videoHeight || 1;
+            return (result.detections || []).flatMap(d => {
+              const category = d.categories?.[0];
+              const name = String(category?.categoryName || '').toLowerCase();
+              if (name !== 'person' && category?.index !== 0) return [];
+              const b = d.boundingBox;
+              if (!b || !Number.isFinite(b.originX) || !Number.isFinite(b.originY)) return [];
+              return [{
+                bbox: {
+                  x: Math.max(0, b.originX / vw),
+                  y: Math.max(0, b.originY / vh),
+                  width: Math.min(1, b.width / vw),
+                  height: Math.min(1, b.height / vh)
+                },
+                score: category?.score ?? 0,
+                classId: 0
+              }];
+            });
+          },
+          close: () => objectDetector.close()
+        };
+      }
+      this.detectorReady = typeof this.detector?.detect === 'function';
+      if (!this.detectorReady) throw new Error('Detector has no detect(video) method');
     } catch (error) {
       console.error('Detector initialisation failed:', error);
+      this.detectorReady = false;
+      this.detector = null;
       this.setStatus('DETECTOR ERROR: ' + error.message, 'error');
     }
   }
@@ -257,23 +311,97 @@ class RunnerTrackingApp {
       ctx.drawImage(video,(w-dw)/2,(h-dh)/2,dw,dh);
     }else{ctx.fillStyle='#080b10';ctx.fillRect(0,0,w,h);ctx.fillStyle='#8b949e';ctx.font='16px monospace';ctx.fillText('Waiting for camera…',20,32);}
     const line=this.pipeline.crossingEngine;
-    ctx.beginPath();ctx.moveTo(line.p1.x*w,line.p1.y*h);ctx.lineTo(line.p2.x*w,line.p2.y*h);
-    ctx.strokeStyle='#2ea043';ctx.lineWidth=Math.max(3,w/450);ctx.setLineDash([10,7]);ctx.stroke();ctx.setLineDash([]);
+    const vw=video.videoWidth||w, vh=video.videoHeight||h;
+    const scale=(this.mode==='camera'||this.mode==='file')?Math.max(w/vw,h/vh):1;
+    const dw=vw*scale, dh=vh*scale, ox=(w-dw)/2, oy=(h-dh)/2;
+    const sx=p=>ox+p.x*dw, sy=p=>oy+p.y*dh;
+    const ax=sx(line.p1), ay=sy(line.p1), bx=sx(line.p2), by=sy(line.p2);
+    ctx.beginPath();ctx.moveTo(ax,ay);ctx.lineTo(bx,by);
+    ctx.strokeStyle='#2ea043';ctx.lineWidth=Math.max(4,w/450);ctx.setLineDash([12,8]);ctx.stroke();ctx.setLineDash([]);
+    // Large draggable endpoint handles and a centre grip are easier to use on phones.
+    for(const p of [{x:ax,y:ay},{x:bx,y:by},{x:(ax+bx)/2,y:(ay+by)/2}]){
+      ctx.beginPath();ctx.arc(p.x,p.y,p===undefined?10:11,0,Math.PI*2);
+      ctx.fillStyle='#ffffff';ctx.fill();ctx.lineWidth=3;ctx.strokeStyle='#16833b';ctx.stroke();
+    }
     for(const track of this.pipeline.tracker.tracks){
-      const b=track.kf.getBBox(),x=b.x*w,y=b.y*h,bw=b.width*w,bh=b.height*h;
+      const b=track.kf.getBBox(),x=ox+b.x*dw,y=oy+b.y*dh,bw=b.width*dw,bh=b.height*dh;
       ctx.strokeStyle=track.hasCrossed?'#da3633':'#58a6ff';ctx.lineWidth=Math.max(2,w/700);ctx.strokeRect(x,y,bw,bh);
       ctx.fillStyle='#fff';ctx.font='14px monospace';ctx.fillText('ID '+track.id,x,Math.max(16,y-5));
     }
   }
 
-  onCanvasPointer(event){
-    if(!this.lineDrag)return;
-    const rect=this.canvas.getBoundingClientRect(),point={
-      x:Math.max(0,Math.min(1,(event.clientX-rect.left)/rect.width)),
-      y:Math.max(0,Math.min(1,(event.clientY-rect.top)/rect.height))
+  screenToVideoPoint(event) {
+    const rect = this.canvas.getBoundingClientRect();
+    const nx = (event.clientX - rect.left) / rect.width;
+    const ny = (event.clientY - rect.top) / rect.height;
+    const vw = this.video.videoWidth || 16, vh = this.video.videoHeight || 9;
+    const scale = Math.max(rect.width / vw, rect.height / vh);
+    const drawnW = vw * scale, drawnH = vh * scale;
+    return {
+      x: Math.max(0, Math.min(1, (nx * rect.width - (rect.width - drawnW) / 2) / drawnW)),
+      y: Math.max(0, Math.min(1, (ny * rect.height - (rect.height - drawnH) / 2) / drawnH))
     };
-    if(this.lineEnd==='p1'){this.pipeline.crossingEngine.p1=point;this.lineEnd='p2';$('app-line').textContent='Tap end point…';}
-    else{this.pipeline.crossingEngine.p2=point;this.lineEnd='p1';this.lineDrag=false;$('app-line').textContent='Set finish line';this.setStatus(this.running?'TIMING ACTIVE':'STANDBY','ok');}
+  }
+
+  onCanvasPointer(event) {
+    if (this.lineDrag) {
+      const point = this.screenToVideoPoint(event);
+      if (this.lineEnd === 'p1') {
+        this.pipeline.crossingEngine.p1 = point;
+        this.lineEnd = 'p2';
+        $('app-line').textContent = 'Tap end point…';
+      } else {
+        this.pipeline.crossingEngine.p2 = point;
+        this.lineEnd = 'p1';
+        this.lineDrag = false;
+        $('app-line').textContent = 'Set finish line';
+        this.setStatus(this.running ? 'TIMING ACTIVE' : 'STANDBY', 'ok');
+      }
+      return;
+    }
+
+    // Grab either end handle, or the middle of the line to move it as a whole.
+    const rect = this.canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left, y = event.clientY - rect.top;
+    const line = this.pipeline.crossingEngine;
+    const toScreen = p => {
+      const vw = this.video.videoWidth || 16, vh = this.video.videoHeight || 9;
+      const scale = Math.max(rect.width / vw, rect.height / vh);
+      const dw = vw * scale, dh = vh * scale;
+      return { x: (rect.width - dw) / 2 + p.x * dw, y: (rect.height - dh) / 2 + p.y * dh };
+    };
+    const a = toScreen(line.p1), b = toScreen(line.p2);
+    const distance = p => Math.hypot(x - p.x, y - p.y);
+    const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    const da = distance(a), db = distance(b), dm = distance(mid);
+    const nearest = Math.min(da, db, dm);
+    if (nearest <= 44) {
+      this.lineMoveTarget = nearest === da ? 'p1' : nearest === db ? 'p2' : 'both';
+      this.pointerActive = true;
+      this.canvas.setPointerCapture?.(event.pointerId);
+      event.preventDefault();
+    }
+  }
+
+  onCanvasPointerMove(event) {
+    if (!this.pointerActive || !this.lineMoveTarget) return;
+    const point = this.screenToVideoPoint(event);
+    const line = this.pipeline.crossingEngine;
+    if (this.lineMoveTarget === 'p1') line.p1 = point;
+    else if (this.lineMoveTarget === 'p2') line.p2 = point;
+    else {
+      const previous = this.lastDragPoint || point;
+      const dx = point.x - previous.x, dy = point.y - previous.y;
+      line.p1 = { x: Math.max(0, Math.min(1, line.p1.x + dx)), y: Math.max(0, Math.min(1, line.p1.y + dy)) };
+      line.p2 = { x: Math.max(0, Math.min(1, line.p2.x + dx)), y: Math.max(0, Math.min(1, line.p2.y + dy)) };
+    }
+    this.lastDragPoint = point;
+  }
+
+  onCanvasPointerEnd() {
+    this.pointerActive = false;
+    this.lineMoveTarget = null;
+    this.lastDragPoint = null;
   }
 
   onFinisher(event) {
