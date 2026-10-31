@@ -133,22 +133,44 @@
       <canvas id="stage" width="640" height="480"></canvas>
     </div>
 
-    <div class="sidebar">
-      <div class="sidebar-section">
-        <h3>Input Source</h3>
-        <div class="control-row">
-          <button id="btn-camera" class="primary">Live Camera</button>
-          <input type="file" id="file-input" accept="video/*" style="display:none">
-          <button id="btn-file">Load Video</button>
-          <button id="btn-mock">Run Scenario</button>
-        </div>
-        <div class="control-row" id="scenario-selector-row" style="display:none;">
-          <select id="mock-scenario" style="width:100%;">
-            <option value="pack_crossing">Synthetic: Dense Pack Finish</option>
-            <option value="occlusion_and_cross">Synthetic: Overlap / Occlusion</option>
-            <option value="reversal_no_finish">Synthetic: Reversal at Line</option>
-          </select>
-        </div>
+  <!-- Top-Right HUD: Collapsible Minimal Finishers (Position & Time Only) -->
+  <div class="finishers-overlay collapsed" id="finishers-panel" aria-label="Finishers List">
+    <div class="finishers-overlay-header">
+      <span>Finishes (<span id="finisher-count">0</span>)</span>
+      <div class="header-actions">
+        <button class="btn-toggle-panel" id="btn-toggle-finishers" title="Toggle Panel" aria-label="Toggle Panel">▲</button>
+        <button class="btn-tiny" id="btn-clear-results" title="Clear current session">Clear</button>
+      </div>
+    </div>
+    <ul class="finishers-compact-list" id="results-list" role="list">
+      <!-- Minimal Position and Formatted Time -->
+    </ul>
+  </div>
+
+  <!-- Bottom Floating Control Dock -->
+  <div class="bottom-dock">
+    <div class="dock-container" role="toolbar" aria-label="Race Timing Controls">
+      <button class="btn-small btn-primary" id="btn-start" disabled>START</button>
+      <button class="btn-small btn-danger" id="btn-stop" disabled>STOP</button>
+      <button class="btn-small" id="btn-toggle-controls" aria-expanded="false" aria-controls="extra-controls">MORE</button>
+      <div class="extra-controls" id="extra-controls">
+        <button class="btn-small" id="btn-dir">DIR</button>
+        <button class="btn-small" id="btn-reset-line">LINE</button>
+        <button class="btn-small" id="btn-flip-cam">FLIP</button>
+        <button class="btn-small btn-primary" id="btn-export">EXPORT</button>
+        <button class="btn-small" id="btn-new-race">NEW</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Finisher Audit Review Modal -->
+  <div class="modal-overlay hidden" id="review-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-content">
+      <h3 id="modal-title" style="font-size:1.05rem;">Finisher Audit</h3>
+      <div id="modal-details" style="font-size:0.82rem; line-height:1.55; color:var(--text-main);"></div>
+      <div class="modal-actions">
+        <button class="btn-small btn-danger" id="btn-modal-discard">Discard Finisher</button>
+        <button class="btn-small" id="btn-modal-close">Close</button>
       </div>
 
       <div class="sidebar-section">
