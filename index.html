@@ -2,163 +2,371 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>AI Finish Line Mobile - Multi-Runner Race Timer</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes, viewport-fit=cover">
-  <meta name="theme-color" content="#000000">
-  <link rel="manifest" href="manifest.json">
-  <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='100' fill='%230a0e14'/%3E%3Cpath d='M120 256h272M256 120v272' stroke='%232ea043' stroke-width='36' stroke-linecap='round'/%3E%3Ccircle cx='256' cy='256' r='60' fill='%233fb950'/%3E%3Cpath d='M180 180l152 152' stroke='%23ffffff' stroke-width='20' stroke-linecap='round'/%3E%3C/svg%3E">
-
-  <!-- Subdirectory path normalization for GitHub Pages -->
-  <script>
-    (function() {
-      var p = window.location.pathname;
-      if (!p.endsWith('/') && !p.split('/').pop().includes('.')) {
-        window.location.replace(p + '/' + window.location.search + window.location.hash);
-      }
-    })();
-  </script>
-
-  <link rel="stylesheet" href="./style.css">
-
-  <!-- Core Layout CSS for zero-latency mobile rendering -->
+  <title>Runner Detection & Tracking Prototype</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
     :root {
-      --bg-dark: #000000;
-      --surface-glass: rgba(18, 22, 28, 0.88);
-      --surface-border: rgba(255, 255, 255, 0.16);
-      --accent-green: #2ea043;
+      --bg: #0d1117;
+      --surface: #161b22;
+      --border: #30363d;
+      --text: #f0f6fc;
+      --accent: #2ea043;
       --accent-red: #da3633;
       --accent-yellow: #d29922;
-      --text-main: #f0f6fc;
-      --text-muted: #8b949e;
-      --safe-top: env(safe-area-inset-top, 8px);
-      --safe-bottom: env(safe-area-inset-bottom, 8px);
-      --safe-left: env(safe-area-inset-left, 8px);
-      --safe-right: env(safe-area-inset-right, 8px);
+      --accent-blue: #58a6ff;
     }
-    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-    html, body {
-      width: 100%; height: 100%; height: 100dvh; overflow: hidden;
-      background-color: var(--bg-dark); color: var(--text-main);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      user-select: none;
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
     }
-    .fullscreen-camera { position: fixed; inset: 0; width: 100vw; height: 100vh; height: 100dvh; z-index: 1; background: #000; overflow: hidden; }
-    video#webcam { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 100%; height: 100%; object-fit: cover; z-index: 1; }
-    canvas#overlay { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 2; touch-action: none; }
+    header {
+      padding: 10px 16px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .layout {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+    .viewport-pane {
+      flex: 1;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #000;
+    }
+    canvas#stage {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+    }
+    .sidebar {
+      width: 340px;
+      background: var(--surface);
+      border-left: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+    }
+    .sidebar-section {
+      padding: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    .sidebar-section h3 {
+      font-size: 0.85rem;
+      margin-bottom: 8px;
+      color: var(--accent-blue);
+      text-transform: uppercase;
+    }
+    .control-row {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 6px;
+    }
+    button, select {
+      background: #21262d;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 0.75rem;
+      cursor: pointer;
+    }
+    button:hover { border-color: var(--accent); }
+    button.primary { background: var(--accent); border-color: #3fb950; }
+    .telemetry-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      font-size: 0.72rem;
+    }
+    .telemetry-item {
+      background: #0d1117;
+      padding: 6px;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+    }
+    .finisher-list {
+      flex: 1;
+      overflow-y: auto;
+      list-style: none;
+      padding: 8px;
+    }
+    .finisher-card {
+      background: #0d1117;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 10px;
+      margin-bottom: 6px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.8rem;
+    }
+    .finisher-pos { font-weight: 800; color: var(--accent); font-size: 1rem; width: 30px; }
+    .finisher-tags { display: flex; gap: 4px; }
+    .tag { font-size: 0.65rem; padding: 2px 4px; border-radius: 4px; background: #21262d; }
+    .tag.warn { background: rgba(210, 153, 34, 0.25); color: var(--accent-yellow); }
+    video#video-source { display: none; }
   </style>
-
-  <!-- TensorFlow.js and MoveNet MultiPose dependencies -->
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@4.17.0/dist/tf-core.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter@4.17.0/dist/tf-converter.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl@4.17.0/dist/tf-backend-webgl.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.3/dist/pose-detection.min.js"></script>
 </head>
 <body>
 
-  <!-- Fullscreen Camera Viewport -->
-  <div class="fullscreen-camera">
-    <video id="webcam" playsinline muted autoplay></video>
-    <canvas id="overlay"></canvas>
-  </div>
+  <header>
+    <div><strong>Runner Tracking Prototype</strong> (ByteTrack + Parametric Sub-Frame)</div>
+    <div id="status-tag" style="font-size: 0.8rem; color: var(--accent);">STANDBY</div>
+  </header>
 
-  <!-- Top-Left HUD (Clock & Real-Time Performance Telemetry) -->
-  <div class="top-left-hud">
-    <div class="clock-card" aria-label="Race Clock">
-      <div class="clock-display" id="clock-display">00:00.000</div>
+  <div class="layout">
+    <div class="viewport-pane">
+      <video id="video-source" playsinline muted></video>
+      <canvas id="stage" width="640" height="480"></canvas>
     </div>
-    <div class="telemetry-pills">
-      <span class="pill" id="status-pill">INIT</span>
-      <span class="pill" id="dir-pill">DIR: L → R</span>
-      <span class="pill" id="fps-render">RND: --</span>
-      <span class="pill" id="fps-cam">CAM: --</span>
-      <span class="pill" id="fps-inf">INF: --</span>
-      <span class="pill" id="active-tracks">0 RUNNERS</span>
-    </div>
-  </div>
 
-  <!-- Top-Right HUD: Collapsible Minimal Finishers (Position & Time Only) -->
-  <div class="finishers-overlay" id="finishers-panel" aria-label="Finishers List">
-    <div class="finishers-overlay-header">
-      <span>Finishes (<span id="finisher-count">0</span>)</span>
-      <div class="header-actions">
-        <button class="btn-toggle-panel" id="btn-toggle-finishers" title="Toggle Panel" aria-label="Toggle Panel">▼</button>
-        <button class="btn-tiny" id="btn-clear-results" title="Clear current session">Clear</button>
+    <div class="sidebar">
+      <div class="sidebar-section">
+        <h3>Input Source</h3>
+        <div class="control-row">
+          <button id="btn-camera" class="primary">Live Camera</button>
+          <input type="file" id="file-input" accept="video/*" style="display:none">
+          <button id="btn-file">Load Video</button>
+          <button id="btn-mock">Run Scenario</button>
+        </div>
+        <div class="control-row" id="scenario-selector-row" style="display:none;">
+          <select id="mock-scenario" style="width:100%;">
+            <option value="pack_crossing">Synthetic: Dense Pack Finish</option>
+            <option value="occlusion_and_cross">Synthetic: Overlap / Occlusion</option>
+            <option value="reversal_no_finish">Synthetic: Reversal at Line</option>
+          </select>
+        </div>
       </div>
-    </div>
-    <ul class="finishers-compact-list" id="results-list" role="list">
-      <!-- Minimal Position and Formatted Time -->
-    </ul>
-  </div>
 
-  <!-- Bottom Floating Control Dock -->
-  <div class="bottom-dock">
-    <div class="dock-container" role="toolbar" aria-label="Race Timing Controls">
-      <button class="btn-small btn-primary" id="btn-start" disabled>START</button>
-      <button class="btn-small btn-danger" id="btn-stop" disabled>STOP</button>
-      <button class="btn-small" id="btn-dir">DIR</button>
-      <button class="btn-small" id="btn-reset-line">LINE</button>
-      <button class="btn-small" id="btn-flip-cam">FLIP</button>
-      <button class="btn-small btn-primary" id="btn-export">EXPORT</button>
-      <button class="btn-small" id="btn-new-race">NEW</button>
-    </div>
-  </div>
+      <div class="sidebar-section">
+        <h3>Timing Controls</h3>
+        <div class="control-row">
+          <button id="btn-start" class="primary">Start Race</button>
+          <button id="btn-stop">Stop Race</button>
+          <button id="btn-reset">Reset</button>
+        </div>
+      </div>
 
-  <!-- Finisher Audit Review Modal -->
-  <div class="modal-overlay hidden" id="review-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
-    <div class="modal-content">
-      <h3 id="modal-title" style="font-size:1.05rem;">Finisher Audit</h3>
-      <div id="modal-details" style="font-size:0.82rem; line-height:1.55; color:var(--text-main);"></div>
-      <div class="modal-actions">
-        <button class="btn-small btn-danger" id="btn-modal-discard">Discard Finisher</button>
-        <button class="btn-small" id="btn-modal-close">Close</button>
+      <div class="sidebar-section">
+        <h3>Diagnostics & Telemetry</h3>
+        <div class="telemetry-grid">
+          <div class="telemetry-item">Pipeline FPS: <span id="val-fps">0</span></div>
+          <div class="telemetry-item">Inference/Frame: <span id="val-lat">0 ms</span></div>
+          <div class="telemetry-item">Tracks: <span id="val-tracks">0</span></div>
+          <div class="telemetry-item">Finishers: <span id="val-fin">0</span></div>
+        </div>
+      </div>
+
+      <div class="sidebar-section" style="flex:1; display:flex; flex-direction:column; overflow:hidden;">
+        <h3>Finish Events Log</h3>
+        <ul class="finisher-list" id="finisher-log"></ul>
       </div>
     </div>
   </div>
 
-  <!-- Email & CSV Export Modal -->
-  <div class="modal-overlay hidden" id="export-modal" role="dialog" aria-modal="true" aria-labelledby="export-modal-title">
-    <div class="modal-content">
-      <h3 id="export-modal-title" style="font-size:1.05rem;">Export Results</h3>
+  <script type="module">
+    import { RunnerPipeline } from './src/pipeline/RunnerPipeline.js';
+    import { MockDetector } from './src/pipeline/MockDetector.js';
 
-      <div class="form-group">
-        <label class="form-label" for="export-email">Recipient Email Address:</label>
-        <input class="form-input" type="email" id="export-email" placeholder="e.g. results@parkrun.com or timer@gmail.com" autocomplete="email">
-      </div>
+    const canvas = document.getElementById('stage');
+    const ctx = canvas.getContext('2d');
+    const video = document.getElementById('video-source');
+    const finisherLog = document.getElementById('finisher-log');
 
-      <div class="form-group">
-        <label class="form-label" for="export-format">Export Format:</label>
-        <select class="form-input" id="export-format">
-          <option value="parkrun_std">Parkrun Standard (Position, Time)</option>
-          <option value="parkrun_barcode">Parkrun Scanned (Position, Time, Barcode)</option>
-          <option value="audit">Full Timing Audit (Sub-frame Alpha, Session, ms)</option>
-        </select>
-      </div>
+    let activePipeline = new RunnerPipeline({
+      lineP1: { x: 0.5, y: 0.05 },
+      lineP2: { x: 0.5, y: 0.95 },
+      direction: 'ltr',
+      onFinisherDetected: renderFinisher
+    });
 
-      <div class="export-options-grid">
-        <button class="btn-small btn-primary" id="btn-email-share">Share CSV File to Email App</button>
-        <button class="btn-small" id="btn-email-mailto">Open Email App (Embedded Body)</button>
-        <button class="btn-small" id="btn-download-csv">Download CSV File Directly</button>
-        <button class="btn-small" id="btn-copy-csv">Copy CSV to Clipboard</button>
-      </div>
+    let inputMode = 'mock'; // 'camera', 'file', 'mock'
+    let mockDetector = new MockDetector('pack_crossing');
+    let lastTime = performance.now();
+    let frameCounter = 0;
+    let fps = 0;
 
-      <div class="modal-actions">
-        <button class="btn-small" id="btn-export-cancel">Cancel</button>
-      </div>
-    </div>
-  </div>
+    function renderFinisher(f) {
+      document.getElementById('val-fin').textContent = activePipeline.finishers.length;
+      const li = document.createElement('li');
+      li.className = 'finisher-card';
+      li.innerHTML = `
+        <div class="finisher-pos">#${f.position}</div>
+        <div>
+          <div><strong>${f.formattedTime}</strong> (ID: ${f.trackId})</div>
+          <div class="finisher-tags">
+            <span class="tag">α: ${f.alpha}</span>
+            <span class="tag">conf: ${f.confidence}</span>
+            ${f.flags.map(fl => `<span class="tag warn">${fl}</span>`).join('')}
+          </div>
+        </div>
+      `;
+      finisherLog.prepend(li);
+    }
 
-  <!-- System Alert Modal -->
-  <div class="modal-overlay hidden" id="alert-modal" role="alertdialog" aria-modal="true" aria-labelledby="alert-title">
-    <div class="modal-content">
-      <h3 id="alert-title" style="color:var(--accent-red); font-size:1.05rem;">System Notice</h3>
-      <p id="alert-message" style="font-size:0.86rem; line-height:1.45;"></p>
-      <div class="modal-actions">
-        <button class="btn-small btn-primary" id="btn-alert-dismiss">Dismiss</button>
-      </div>
-    </div>
-  </div>
+    function drawStage(tracks) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  <script src="./app.js"></script>
+      if (inputMode === 'camera' || inputMode === 'file') {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      } else {
+        // Clear background for mock test
+        ctx.fillStyle = '#111';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+
+      // Draw Finish Line
+      const p1 = activePipeline.crossingEngine.p1;
+      const p2 = activePipeline.crossingEngine.p2;
+      ctx.beginPath();
+      ctx.moveTo(p1.x * canvas.width, p1.y * canvas.height);
+      ctx.lineTo(p2.x * canvas.width, p2.y * canvas.height);
+      ctx.strokeStyle = '#2ea043';
+      ctx.lineWidth = 3;
+      ctx.setLineDash([6, 4]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Draw Active Tracks
+      for (const t of tracks) {
+        const box = t.kf.getBBox();
+        const bx = box.x * canvas.width;
+        const by = box.y * canvas.height;
+        const bw = box.width * canvas.width;
+        const bh = box.height * canvas.height;
+
+        ctx.strokeStyle = t.hasCrossed ? '#da3633' : '#58a6ff';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(bx, by, bw, bh);
+
+        // Draw Torso Center Landmark
+        if (t.trajectory.length > 0) {
+          const pt = t.trajectory[t.trajectory.length - 1];
+          ctx.beginPath();
+          ctx.arc(pt.x * canvas.width, pt.y * canvas.height, 4, 0, 2 * Math.PI);
+          ctx.fillStyle = t.hasCrossed ? '#da3633' : '#2ea043';
+          ctx.fill();
+        }
+
+        ctx.fillStyle = '#fff';
+        ctx.font = '11px monospace';
+        ctx.fillText(`ID:${t.id} (${t.score.toFixed(2)})`, bx, Math.max(12, by - 4));
+      }
+    }
+
+    function loop(now) {
+      frameCounter++;
+      if (now - lastTime >= 1000) {
+        fps = frameCounter;
+        frameCounter = 0;
+        lastTime = now;
+        document.getElementById('val-fps').textContent = fps;
+      }
+
+      const t0 = performance.now();
+      let detections = [];
+
+      if (inputMode === 'mock') {
+        detections = mockDetector.generateFrame(now);
+      } else if ((inputMode === 'camera' || inputMode === 'file') && video.readyState >= 2) {
+        // Fallback placeholder for direct webcam input without loaded ONNX weights
+        detections = [];
+      }
+
+      const { activeTracks } = activePipeline.processFrame(detections, now);
+      const latency = performance.now() - t0;
+
+      document.getElementById('val-lat').textContent = latency.toFixed(1) + ' ms';
+      document.getElementById('val-tracks').textContent = activeTracks.length;
+
+      drawStage(activeTracks);
+      requestAnimationFrame(loop);
+    }
+
+    // UI Event Wiring
+    document.getElementById('btn-start').onclick = () => {
+      activePipeline.startRace(performance.now());
+      document.getElementById('status-tag').textContent = 'TIMING ACTIVE';
+      document.getElementById('status-tag').style.color = '#2ea043';
+    };
+
+    document.getElementById('btn-stop').onclick = () => {
+      activePipeline.stopRace();
+      document.getElementById('status-tag').textContent = 'STOPPED';
+      document.getElementById('status-tag').style.color = '#da3633';
+    };
+
+    document.getElementById('btn-reset').onclick = () => {
+      activePipeline = new RunnerPipeline({
+        lineP1: { x: 0.5, y: 0.05 },
+        lineP2: { x: 0.5, y: 0.95 },
+        direction: 'ltr',
+        onFinisherDetected: renderFinisher
+      });
+      finisherLog.innerHTML = '';
+      document.getElementById('val-fin').textContent = '0';
+      if (inputMode === 'mock') {
+        mockDetector = new MockDetector(document.getElementById('mock-scenario').value);
+      }
+    };
+
+    document.getElementById('btn-mock').onclick = () => {
+      inputMode = 'mock';
+      document.getElementById('scenario-selector-row').style.display = 'flex';
+      mockDetector = new MockDetector(document.getElementById('mock-scenario').value);
+    };
+
+    document.getElementById('mock-scenario').onchange = (e) => {
+      mockDetector = new MockDetector(e.target.value);
+    };
+
+    document.getElementById('btn-file').onclick = () => document.getElementById('file-input').click();
+    document.getElementById('file-input').onchange = (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        inputMode = 'file';
+        document.getElementById('scenario-selector-row').style.display = 'none';
+        video.src = URL.createObjectURL(file);
+        video.onloadedmetadata = () => {
+          canvas.width = video.videoWidth || 640;
+          canvas.height = video.videoHeight || 480;
+          video.play();
+        };
+      }
+    };
+
+    document.getElementById('btn-camera').onclick = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
+        });
+        inputMode = 'camera';
+        document.getElementById('scenario-selector-row').style.display = 'none';
+        video.srcObject = stream;
+        video.onloadedmetadata = () => {
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          video.play();
+        };
+      } catch (err) {
+        alert('Could not start camera: ' + err.message);
+      }
+    };
+
+    requestAnimationFrame(loop);
+  </script>
 </body>
 </html>
