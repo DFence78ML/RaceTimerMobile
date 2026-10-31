@@ -1037,5 +1037,9 @@ class RaceTimerApp {
 
 // Global initialization
 window.addEventListener('DOMContentLoaded', () => {
-  window.raceApp = new RaceTimerApp();
+  // The regression test page imports the engine without the camera UI.
+  // Only bootstrap the live app when its required elements are present.
+  if (document.getElementById('webcam') && document.getElementById('overlay')) {
+    window.raceApp = new RaceTimerApp();
+  }
 });
