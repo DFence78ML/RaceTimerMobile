@@ -300,3 +300,28 @@ button.btn-small:disabled { opacity: 0.45; cursor: not-allowed; transform: none;
 .export-options-grid { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
 .hidden { display: none !important; }
+
+/* Compact mobile controls: keep the finish line visible until extra controls are requested. */
+.dock-container { align-items: center; }
+.extra-controls { display: none; width: 100%; flex-wrap: wrap; justify-content: center; gap: 6px; }
+.bottom-dock.expanded .extra-controls { display: flex; }
+.bottom-dock:not(.expanded) { padding-top: 4px; padding-bottom: max(5px, var(--safe-bottom)); }
+.bottom-dock:not(.expanded) .dock-container { flex-wrap: nowrap; max-width: 360px; }
+.bottom-dock:not(.expanded) .dock-container > button { flex: 1 1 0; }
+@media (max-width: 700px) {
+  .finishers-overlay { width: min(142px, 40vw); }
+  .top-left-hud { max-width: calc(100vw - 154px); gap: 4px; }
+  .clock-display { font-size: clamp(1.15rem, 5vw, 1.45rem); }
+  .telemetry-pills { gap: 3px; font-size: 0.58rem; }
+  .telemetry-pills .pill { padding: 2px 5px; }
+  .finishers-overlay:not(.collapsed) { max-height: min(34vh, 230px); }
+  .bottom-dock.expanded { background: rgba(0,0,0,0.9); }
+  .bottom-dock.expanded .dock-container { max-width: 420px; }
+  button.btn-small { min-height: 44px; }
+}
+@media (max-height: 500px) and (orientation: landscape) {
+  .top-left-hud { transform: scale(.82); transform-origin: top left; }
+  .finishers-overlay { top: 4px; max-height: 30vh; }
+  .bottom-dock:not(.expanded) { padding-top: 2px; padding-bottom: 3px; }
+  button.btn-small { min-height: 38px; padding: 5px 9px; }
+}
