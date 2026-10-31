@@ -49,6 +49,7 @@ class RunnerTrackingApp {
     this.lineMoveTarget = null;
     this.pointerActive = false;
     this.lastDetectionTimestamp = 0;
+    this.detectorError = null;
     this.reviewEvent = null;
 
     this.buildControls();
@@ -143,7 +144,7 @@ class RunnerTrackingApp {
       }});
       this.video.srcObject=this.stream;await this.video.play();this.mode='camera';this.resizeCanvas();
       await this.initializeDetector();
-      this.setStatus(this.detectorReady?'CAMERA + PERSON DETECTOR READY':'CAMERA READY · DETECTOR UNAVAILABLE',this.detectorReady?'ok':'warn');
+      this.setStatus(this.detectorReady?'CAMERA + PERSON DETECTOR READY':(this.detectorError ? 'DETECTOR ERROR · '+this.detectorError : 'CAMERA READY · DETECTOR UNAVAILABLE'),this.detectorReady?'ok':'warn');
     }catch(error){this.setStatus('CAMERA ERROR: '+error.message,'error');}
   }
 
@@ -181,6 +182,7 @@ class RunnerTrackingApp {
   async initializeDetector() {
     this.detectorReady = false;
     this.detector = null;
+    this.detectorError = null;
     try {
       // Allow a project-specific detector to override the built-in detector.
       if (typeof window.runnerDetectorFactory === 'function') {
@@ -195,12 +197,20 @@ class RunnerTrackingApp {
           'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
         );
         const model = 'https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.tflite';
-        const objectDetector = await ObjectDetector.createFromOptions(vision, {
+        const detectorOptions = {
           baseOptions: { modelAssetPath: model, delegate: 'GPU' },
           runningMode: 'VIDEO',
           scoreThreshold: 0.25,
           maxResults: 30
-        });
+        };
+        let objectDetector;
+        try {
+          objectDetector = await ObjectDetector.createFromOptions(vision, detectorOptions);
+        } catch (gpuError) {
+          console.warn('GPU delegate unavailable; retrying detector on CPU:', gpuError);
+          detectorOptions.baseOptions.delegate = 'CPU';
+          objectDetector = await ObjectDetector.createFromOptions(vision, detectorOptions);
+        }
         this.detector = {
           detect: (video) => {
             const timestamp = Math.max(performance.now(), this.lastDetectionTimestamp + 1);
@@ -234,7 +244,8 @@ class RunnerTrackingApp {
       console.error('Detector initialisation failed:', error);
       this.detectorReady = false;
       this.detector = null;
-      this.setStatus('DETECTOR ERROR: ' + error.message, 'error');
+      this.detectorError = error?.message || String(error);
+      this.setStatus('DETECTOR ERROR: ' + this.detectorError, 'error');
     }
   }
 
@@ -320,7 +331,7 @@ class RunnerTrackingApp {
     ctx.strokeStyle='#2ea043';ctx.lineWidth=Math.max(4,w/450);ctx.setLineDash([12,8]);ctx.stroke();ctx.setLineDash([]);
     // Large draggable endpoint handles and a centre grip are easier to use on phones.
     for(const p of [{x:ax,y:ay},{x:bx,y:by},{x:(ax+bx)/2,y:(ay+by)/2}]){
-      ctx.beginPath();ctx.arc(p.x,p.y,p===undefined?10:11,0,Math.PI*2);
+      ctx.beginPath();ctx.arc(p.x,p.y,11,0,Math.PI*2);
       ctx.fillStyle='#ffffff';ctx.fill();ctx.lineWidth=3;ctx.strokeStyle='#16833b';ctx.stroke();
     }
     for(const track of this.pipeline.tracker.tracks){
