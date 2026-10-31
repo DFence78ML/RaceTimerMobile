@@ -2,203 +2,35 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Runner Detection & Tracking Prototype</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#080b10">
+  <title>Race Timer</title>
   <style>
-    :root {
-      --bg: #0d1117;
-      --surface: #161b22;
-      --border: #30363d;
-      --text: #f0f6fc;
-      --accent: #2ea043;
-      --accent-red: #da3633;
-      --accent-yellow: #d29922;
-      --accent-blue: #58a6ff;
+    :root{color-scheme:dark;background:#080b10}
+    *{box-sizing:border-box}
+    html,body{width:100%;height:100%;margin:0;overflow:hidden;background:#080b10}
+    body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
+    .layout{position:fixed;inset:0;display:flex;overflow:hidden}
+    .viewport-pane{position:relative;flex:1;min-width:0;min-height:0;width:100%;height:100%;overflow:hidden;background:#000}
+    #video-source{display:none}
+    #stage{position:absolute;inset:0;width:100%;height:100%;display:block;object-fit:cover}
+    button{font:inherit;cursor:pointer}
+    button:focus-visible{outline:2px solid #58a6ff;outline-offset:2px}
+    #app-more-menu[hidden]{display:none!important}
+    @media(max-width:420px){
+      #app-controls{gap:5px!important;padding:6px!important}
+      #app-controls>button{min-width:58px!important;padding:0 11px!important;font-size:12px!important}
     }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      background: var(--bg);
-      color: var(--text);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
-      display: flex;
-      flex-direction: column;
-      height: 100vh;
-      overflow: hidden;
-    }
-    header {
-      padding: 10px 16px;
-      background: var(--surface);
-      border-bottom: 1px solid var(--border);
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-    .layout {
-      display: flex;
-      flex: 1;
-      overflow: hidden;
-    }
-    .viewport-pane {
-      flex: 1;
-      position: relative;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: #000;
-    }
-    canvas#stage {
-      max-width: 100%;
-      max-height: 100%;
-      object-fit: contain;
-    }
-    .sidebar {
-      width: 340px;
-      background: var(--surface);
-      border-left: 1px solid var(--border);
-      display: flex;
-      flex-direction: column;
-    }
-    .sidebar-section {
-      padding: 12px;
-      border-bottom: 1px solid var(--border);
-    }
-    .sidebar-section h3 {
-      font-size: 0.85rem;
-      margin-bottom: 8px;
-      color: var(--accent-blue);
-      text-transform: uppercase;
-    }
-    .control-row {
-      display: flex;
-      gap: 6px;
-      margin-bottom: 6px;
-    }
-    button, select {
-      background: #21262d;
-      color: var(--text);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 6px 10px;
-      font-size: 0.75rem;
-      cursor: pointer;
-    }
-    button:hover { border-color: var(--accent); }
-    button.primary { background: var(--accent); border-color: #3fb950; }
-    .telemetry-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 6px;
-      font-size: 0.72rem;
-    }
-    .telemetry-item {
-      background: #0d1117;
-      padding: 6px;
-      border-radius: 4px;
-      border: 1px solid var(--border);
-    }
-    .finisher-list {
-      flex: 1;
-      overflow-y: auto;
-      list-style: none;
-      padding: 8px;
-    }
-    .finisher-card {
-      background: #0d1117;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 6px 10px;
-      margin-bottom: 6px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      font-size: 0.8rem;
-    }
-    .finisher-pos { font-weight: 800; color: var(--accent); font-size: 1rem; width: 30px; }
-    .finisher-tags { display: flex; gap: 4px; }
-    .tag { font-size: 0.65rem; padding: 2px 4px; border-radius: 4px; background: #21262d; }
-    .tag.warn { background: rgba(210, 153, 34, 0.25); color: var(--accent-yellow); }
-    video#video-source { display: none; }
   </style>
+  <link rel="manifest" href="./manifest.json">
 </head>
 <body>
-
-  <header>
-    <div><strong>Runner Tracking Prototype</strong> (ByteTrack + Parametric Sub-Frame)</div>
-    <div id="status-tag" style="font-size: 0.8rem; color: var(--accent);">STANDBY</div>
-  </header>
-
-  <div class="layout">
-    <div class="viewport-pane">
-      <video id="video-source" playsinline muted></video>
-      <canvas id="stage" width="640" height="480"></canvas>
-    </div>
-
-  <!-- Top-Right HUD: Collapsible Minimal Finishers (Position & Time Only) -->
-  <div class="finishers-overlay collapsed" id="finishers-panel" aria-label="Finishers List">
-    <div class="finishers-overlay-header">
-      <span>Finishes (<span id="finisher-count">0</span>)</span>
-      <div class="header-actions">
-        <button class="btn-toggle-panel" id="btn-toggle-finishers" title="Toggle Panel" aria-label="Toggle Panel">▲</button>
-        <button class="btn-tiny" id="btn-clear-results" title="Clear current session">Clear</button>
-      </div>
-    </div>
-    <ul class="finishers-compact-list" id="results-list" role="list">
-      <!-- Minimal Position and Formatted Time -->
-    </ul>
-  </div>
-
-  <!-- Bottom Floating Control Dock -->
-  <div class="bottom-dock">
-    <div class="dock-container" role="toolbar" aria-label="Race Timing Controls">
-      <button class="btn-small btn-primary" id="btn-start" disabled>START</button>
-      <button class="btn-small btn-danger" id="btn-stop" disabled>STOP</button>
-      <button class="btn-small" id="btn-toggle-controls" aria-expanded="false" aria-controls="extra-controls">MORE</button>
-      <div class="extra-controls" id="extra-controls">
-        <button class="btn-small" id="btn-dir">DIR</button>
-        <button class="btn-small" id="btn-reset-line">LINE</button>
-        <button class="btn-small" id="btn-flip-cam">FLIP</button>
-        <button class="btn-small btn-primary" id="btn-export">EXPORT</button>
-        <button class="btn-small" id="btn-new-race">NEW</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Finisher Audit Review Modal -->
-  <div class="modal-overlay hidden" id="review-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
-    <div class="modal-content">
-      <h3 id="modal-title" style="font-size:1.05rem;">Finisher Audit</h3>
-      <div id="modal-details" style="font-size:0.82rem; line-height:1.55; color:var(--text-main);"></div>
-      <div class="modal-actions">
-        <button class="btn-small btn-danger" id="btn-modal-discard">Discard Finisher</button>
-        <button class="btn-small" id="btn-modal-close">Close</button>
-      </div>
-
-      <div class="sidebar-section">
-        <h3>Timing Controls</h3>
-        <div class="control-row">
-          <button id="btn-start" class="primary">Start Race</button>
-          <button id="btn-stop">Stop Race</button>
-          <button id="btn-reset">Reset</button>
-        </div>
-      </div>
-
-      <div class="sidebar-section">
-        <h3>Diagnostics & Telemetry</h3>
-        <div class="telemetry-grid">
-          <div class="telemetry-item">Pipeline FPS: <span id="val-fps">0</span></div>
-          <div class="telemetry-item">Inference/Frame: <span id="val-lat">0 ms</span></div>
-          <div class="telemetry-item">Tracks: <span id="val-tracks">0</span></div>
-          <div class="telemetry-item">Finishers: <span id="val-fin">0</span></div>
-        </div>
-      </div>
-
-      <div class="sidebar-section" style="flex:1; display:flex; flex-direction:column; overflow:hidden;">
-        <h3>Finish Events Log</h3>
-        <ul class="finisher-list" id="finisher-log"></ul>
-      </div>
-    </div>
-  </div>
-
+  <main class="layout">
+    <section class="viewport-pane" aria-label="Race camera and timing view">
+      <video id="video-source" playsinline muted autoplay></video>
+      <canvas id="stage" width="1280" height="720" aria-label="Live camera with runner tracking overlay"></canvas>
+    </section>
+  </main>
   <script type="module" src="./app.js"></script>
 </body>
 </html>
