@@ -92,9 +92,6 @@
       const reacquired = occlusionTracker.update([onePose(0.41)], 1066)[0];
       assert('Tracker: Keeps the same ID after a brief missed detection', first.id === reacquired.id);
 
-      // Test 9: A crossed track remains crossed and cannot emit another finish.
-      first.state = 'CROSSED';
-      assert('Tracker: Crossed state is retained on the existing track', reacquired.state === 'CROSSED' || first.id === reacquired.id);
 
       summary.innerHTML = `Suite Result: ${passed} Passed, ${failed} Failed`;
       summary.className = failed === 0 ? 'summary pass' : 'summary fail';
